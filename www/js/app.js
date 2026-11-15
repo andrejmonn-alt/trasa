@@ -89,7 +89,7 @@ async function loadNetwork() {
   }
   await new Promise(r => setTimeout(r, 30));
   const t = performance.now();
-  net = buildNetwork(feeds, { scope: settings.scope, overrides: settings.overrides });
+  net = buildNetwork(feeds, { scope: settings.scope, overrides: settings.overrides, approx: ['vrap', 'svtxt', 'railtxt'] });
   const stale = feeds.some(f => Date.now() - f.importedAt > 10 * 86400000);
   $('#netStatus').textContent = `${net.nStops} ост. · ${net.nTrips} рейсов` + (stale ? ' · ⚠ обновите' : '');
   console.log('network built in', Math.round(performance.now() - t), 'ms');

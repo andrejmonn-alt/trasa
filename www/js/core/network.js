@@ -6,7 +6,53 @@ export const WALK_SPEED = 1.25; // м/с ≈ 4.5 км/ч
 export const DETOUR = 1.3;       // коэффициент «не по прямой»
 export function walkSec(m, speed = WALK_SPEED) { return Math.ceil(m * DETOUR / speed); }
 
+// Самодельные фиды (по таблицам/PDF, координаты примерные) согласуем с официальными:
+// 1) их остановки «прилипают» к официальной остановке с тем же названием (≤ 6 км);
+// 2) их линии, которые уже есть в официальных данных (тот же номер), отбрасываются — без дублей.
+export function reconcileFeeds(feeds, approxIds) {
+  const approx = new Set(approxIds || []);
+  const real = feeds.filter(f => !approx.has(f.id));
+  if (!real.length || !feeds.some(f => approx.has(f.id))) return feeds;
+  const realShort = new Set();
+  const realByName = new Map();
+  for (const f of real) {
+    if (f.kind !== 'city') f.routes.short.forEach(sh => { if (sh) realShort.add(norm(sh)); });
+    for (let i = 0; i < f.stops.id.length; i++) {
+      const k = norm(f.stops.name[i]); let a = realByName.get(k); if (!a) realByName.set(k, a = []);
+      a.push([f.stops.lat[i], f.stops.lon[i]]);
+    }
+  }
+  return feeds.map(f => {
+    if (!approx.has(f.id)) return f;
+    // 1) координаты
+    const lat = Float64Array.from(f.stops.lat), lon = Float64Array.from(f.stops.lon), moved = new Map();
+    for (let i = 0; i < lat.length; i++) {
+      const c = realByName.get(norm(f.stops.name[i])); if (!c) continue;
+      let best = null, bd = 6000;
+      for (const [la, lo] of c) { const d = distM(lat[i], lon[i], la, lo); if (d < bd) { bd = d; best = [la, lo]; } }
+      if (best) { moved.set(Math.fround(lat[i]) + ',' + Math.fround(lon[i]), best); lat[i] = best[0]; lon[i] = best[1]; }
+    }
+    // 2) какие маршруты оставить
+    const keepR = f.routes.short.map(sh => !(sh && realShort.has(norm(sh))));
+    const tr = { route: [], service: [], headsign: [], off: [] }, st = { stop: [], arr: [], dep: [] };
+    for (let t = 0; t < f.trips.route.length; t++) {
+      if (!keepR[f.trips.route[t]]) continue;
+      tr.route.push(f.trips.route[t]); tr.service.push(f.trips.service[t]); tr.headsign.push(f.trips.headsign[t]); tr.off.push(st.stop.length);
+      for (let i = f.trips.off[t]; i < f.trips.off[t + 1]; i++) { st.stop.push(f.st.stop[i]); st.arr.push(f.st.arr[i]); st.dep.push(f.st.dep[i]); }
+    }
+    tr.off.push(st.stop.length);
+    const lines = f.lines.filter(l => keepR[l.route]).map(l => {
+      const c = Float32Array.from(l.coords);
+      for (let i = 0; i < c.length; i += 2) { const m = moved.get(c[i] + ',' + c[i + 1]); if (m) { c[i] = m[0]; c[i + 1] = m[1]; } }
+      return { ...l, coords: c };
+    });
+    return { ...f, stops: { ...f.stops, lat, lon }, trips: { ...f.trips, route: Int32Array.from(tr.route), service: Int32Array.from(tr.service), headsign: tr.headsign, off: Int32Array.from(tr.off) },
+      st: { ...f.st, stop: Int32Array.from(st.stop), arr: Int32Array.from(st.arr), dep: Int32Array.from(st.dep) }, lines };
+  });
+}
+
 export function buildNetwork(feeds, opts = {}) {
+  feeds = reconcileFeeds(feeds, opts.approx);
   const scope = opts.scope || 'county';
   const overrides = opts.overrides || {};
   const transferRadius = opts.transferRadius || 350;
