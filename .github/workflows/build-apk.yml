@@ -23,7 +23,10 @@ jobs:
           distribution: temurin
           java-version: 17
 
-      - uses: android-actions/setup-android@v3
+      - name: Android SDK (уже есть на сервере GitHub)
+        run: |
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          echo "sdk.dir=$ANDROID_HOME" > /tmp/local.properties
 
       - name: Установка зависимостей
         run: npm install
@@ -36,6 +39,7 @@ jobs:
           npx cap add android
           node scripts/patch-android.js
           npx cap sync android
+          cp /tmp/local.properties android/local.properties
 
       - name: Сборка debug-APK
         working-directory: android
