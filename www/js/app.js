@@ -15,7 +15,9 @@ const FEEDS = [
   { id: 'vrap', title: 'VRAP: направление Неменчине (171, 148, 154, 157, 158, 160)', url: 'data/vrap.zip', kind: 'regional', filter: 'none', def: true, exp: 'из таблиц vrap.lt' },
   { id: 'svtxt', title: 'Švenčionys – Pabradė – Vilnius (Transporto centras, Meteorit turas, Seknija)', url: 'data/svencionys.zip', kind: 'regional', filter: 'none', def: false, exp: 'по тексту svencionys.lt — включайте, если районный файл не скачался' },
   { id: 'ltsar', title: 'Междугородние рейсы через Вильнюсский край (LTSA)', url: 'https://www.visimarsrutai.lt/gtfs/LTSAR.zip', kind: 'regional', filter: 'region', def: true },
-  { id: 'trains', title: 'Поезда (из общего файла Литвы)', url: 'https://www.visimarsrutai.lt/gtfs/google_transit.zip', kind: 'regional', filter: 'rail', def: false, exp: 'экспериментально, ~большой файл' },
+  { id: 'ltg', title: 'Поезда LTG Link (GTFS, transitous/jbb)', url: 'https://jbb.ghsq.de/gtfs/lt-ltglink.gtfs.zip', kind: 'regional', filter: 'region', def: true },
+  { id: 'railtxt', title: 'Поезда по PDF LTG Link (встроено)', url: 'data/rail.zip', kind: 'regional', filter: 'none', def: false, exp: 'запасной вариант, если файл выше не скачался' },
+  { id: 'trains', title: 'Поезда (из общего файла Литвы)', url: 'https://www.visimarsrutai.lt/gtfs/google_transit.zip', kind: 'regional', filter: 'rail', def: false, exp: 'большой файл; не включайте вместе с другими «Поездами»' },
   { id: 'salc', title: 'Шальчининкский район', url: 'https://www.visimarsrutai.lt/gtfs/SalcininkuR.zip', kind: 'regional', filter: 'region', def: true },
   { id: 'sven', title: 'Швянчёнский район', url: 'https://www.visimarsrutai.lt/gtfs/SvencioniuR.zip', kind: 'regional', filter: 'region', def: true },
   { id: 'trak', title: 'Тракайский район', url: 'https://www.visimarsrutai.lt/gtfs/TrakuR.zip', kind: 'regional', filter: 'region', def: true },
@@ -33,7 +35,8 @@ const settings = Object.assign({
   feeds: Object.fromEntries(FEEDS.map(f => [f.id, f.def])),
   scope: 'county', perStop: true, buffer: 2, maxWalk: 1200, markHours: 3, overrides: {}
 }, LS.get('settings', {}));
-if (!settings.v2) { settings.scope = 'county'; for (const f of FEEDS) if (settings.feeds[f.id] === undefined || (f.def && ['salc', 'sven', 'trak', 'sirv', 'elek', 'ukm', 'vrap'].includes(f.id))) settings.feeds[f.id] = f.def; settings.v2 = true; }
+if (!settings.v3) { settings.v2 = false; settings.v3 = true; }
+if (!settings.v2) { settings.scope = 'county'; for (const f of FEEDS) if (settings.feeds[f.id] === undefined || (f.def && ['salc', 'sven', 'trak', 'sirv', 'elek', 'ukm', 'vrap', 'ltg'].includes(f.id))) settings.feeds[f.id] = f.def; settings.v2 = true; }
 const saveSettings = () => LS.set('settings', settings);
 let plans = LS.get('plans', []);
 const savePlans = () => LS.set('plans', plans);
@@ -116,8 +119,28 @@ function resolveStops(e) {
   return accessFromPoint(net, e.lat, e.lon, 600);
 }
 function routeChips(routes, max = 6, size = '') {
-  const sorted = routes.slice().sort((a, b) => (net.routeShort[a] || '').localeCompare(net.routeShort[b] || '', 'lt', { numeric: true }));
+  const seen = new Set();
+  const sorted = routes.slice().sort((a, b) => (net.routeShort[a] || '').localeCompare(net.routeShort[b] || '', 'lt', { numeric: true }))
+    .filter(r => { const k = net.routeCat[r] + (net.routeShort[r] || net.routeName[r]); if (seen.has(k)) return false; seen.add(k); return true; });
   return sorted.slice(0, max).map(r => `<span class="badge ${size} ${net.routeCat[r]}">${esc(net.routeShort[r] || net.routeName[r])}</span>`).join('') + (routes.length > max ? ` <small style="display:inline">+${routes.length - max}</small>` : '');
+}
+// подпись «где это»: чтобы различать одноимённые остановки (три Miškiniai и т.п.)
+const HUBS = [['Wilno', 54.687, 25.28], ['Niemenczyn', 54.849, 25.475], ['Podbrodzie', 54.98, 25.76], ['Święciany', 55.134, 26.159],
+  ['Troki', 54.637, 24.934], ['Landwarów', 54.643, 25.051], ['Soleczniki', 54.31, 25.38], ['Jaszuny', 54.44, 25.33],
+  ['Mejszagoła', 54.868, 25.057], ['Szyrwinty', 55.045, 24.956], ['Wiłkomierz', 55.25, 24.75], ['Elektreny', 54.786, 24.663],
+  ['Bezdany', 54.783, 25.545], ['Sużany', 54.976, 25.626], ['Rudziszki', 54.52, 24.83], ['Nowe Święciany', 55.163, 26.0],
+  ['Ignalina', 55.345, 26.167], ['Visaginas', 55.596, 26.437], ['Molėtai', 55.23, 25.42], ['Varėna', 54.22, 24.57], ['Kiena', 54.65, 25.633]];
+function whereLabel(g) {
+  const isTrain = g.routes.some(r => net.routeCat[r] === 'train');
+  const city = g.stops.some(s => net.feeds[net.stopFeed[s]] === 'vilnius');
+  let lab;
+  if (city) lab = 'Вильнюс, город';
+  else {
+    let best = null, bd = 1e12;
+    for (const [n, la, lo] of HUBS) { const d = distM(g.lat, g.lon, la, lo); if (d < bd) { bd = d; best = n; } }
+    lab = bd < 2500 ? best : `≈ ${Math.round(bd / 1000)} км от ${best}`;
+  }
+  return (isTrain ? 'ж/д станция · ' : '') + lab;
 }
 function badge(cat, text, size = '') { return `<span class="badge ${size} ${cat}">${CAT_ICON[cat] || ''}${esc(text)}</span>`; }
 for (const which of ['from', 'to']) {
@@ -126,7 +149,7 @@ for (const which of ['from', 'to']) {
     ep[which] = null;
     if (!net) return;
     const res = searchGroups(net, inp.value, 10);
-    box.innerHTML = res.map((g, i) => `<div data-i="${i}">${esc(g.name)}${g.lt !== g.name ? `<small>${esc(g.lt)}</small>` : ''}${net.feeds[net.stopFeed[g.stops[0]]] !== 'vilnius' ? `<small>пригород / за городом</small>` : ''}<div class="lines">${routeChips(g.routes, 8, 'sm')}</div></div>`).join('');
+    box.innerHTML = res.map((g, i) => `<div data-i="${i}">${esc(g.name)}${g.lt !== g.name ? `<small>${esc(g.lt)}</small>` : ''}<small>${esc(whereLabel(g))}</small><div class="lines">${routeChips(g.routes, 8, 'sm')}</div></div>`).join('');
     box.classList.toggle('open', res.length > 0);
     box.querySelectorAll('[data-i]').forEach(d => d.onclick = () => { setEp(which, groupEp(res[+d.dataset.i])); box.classList.remove('open'); });
   });
@@ -414,7 +437,9 @@ function renderFeeds() {
       <p class="hint" style="margin:10px 0 0">Собрано вручную из таблиц vrap.lt: время отправления — с таблиц конечных (Nemenčinės pl. от 01.03.2026, Nemenčinė от 01.02.2026), время в пути — по таблицам остановок (2022–2024), поэтому на промежуточных остановках возможна разница ±5 мин (как и пишет сам VRAP). Рейсы со * ходят только в учебное время школ — каникулы учтены приблизительно. Координаты деревень приблизительные.</p></div>
       <div class="card"><div class="data-hero"><span class="badge intercity">Švenčionys</span><div><b>Švenčionys / Visaginas / Molėtai – Pabradė – Vilnius</b><div class="hint" style="margin:2px 0 0">Transporto centras, Meteorit turas, Seknija · ${(feedMeta.svtxt || { counts: {} }).counts.trips || 0} рейсов</div></div></div>
       <p class="hint" style="margin:10px 0 0">По тексту страницы svencionys.lt. Официальны только отправления из Švenčionys, Pabradė и Vilniaus AS; местные рейсы Transporto centras проведены через Nemenčinės pl., Неменчине и деревни линии 160 (Girininkija, Pakrauglė, Raudondvaris, Miškiniai, Pailgė) — время на этих остановках рассчитано (± до 10 мин). Рейсы на Visaginas (Meteorit/Seknija) в Неменчине не заезжают: Vilnius, Pailgė, Pabradė и дальше до Ignalina и Visaginas (участок за Švenčionys и время выезда из Visaginas — расчётные). Добавлены короткие рейсы Švenčionys–Pabradė, Pabradė–Zalavas и Molėtai–Pabradė (время в пути ~60 мин — расчётное). Рейс TOKS (Vilnius–Visaginas) не включён — по тексту его движение остановлено с 01.09.2026.</p></div>
-      <div class="card"><b>Чего нет в этой версии</b><p class="hint" style="margin:6px 0 0">Линий 163 (Eitminiškės), 146 (Skirgiškės), 172/174 и рейсов в Вильнюс через Ąžulaukė/Pranciškonys/Pašiliai — для них нет таблиц с остановками. Нет остальных междугородних (кроме Швянчёниса) и поездов. Уведомления и GPS работают только в APK.</p></div>`;
+      <div class="card"><div class="data-hero"><span class="badge train">Поезда</span><div><b>LTG Link — 5 линий через край</b><div class="hint" style="margin:2px 0 0">Turmantas (Pabradė, Švenčionėliai), Trakai, Marcinkonys (Lentvaris, Rūdiškės), аэропорт – Jašiūnai, Kena · ${(feedMeta.railtxt || { counts: {} }).counts.trips || 0} поездов</div></div></div>
+      <p class="hint" style="margin:10px 0 0">По годовым PDF LTG Link (с 14.12.2025) и отправлениям из Naujoji Vilnia (Kena). Весной 2026 часть линий обновлялась — сверяйте с ltglink.lt. Дни курсирования некоторых поездов в PDF не читаются — считаются ежедневными. Линии Vilnius–Kaunas (Lentvaris, Vievis) здесь нет, в APK она придёт из полного файла LTG Link.</p></div>
+      <div class="card"><b>Чего нет в этой версии</b><p class="hint" style="margin:6px 0 0">Линий 163 (Eitminiškės), 146 (Skirgiškės), 172/174 и рейсов в Вильнюс через Ąžulaukė/Pranciškonys/Pašiliai — для них нет таблиц с остановками. Нет остальных междугородних (кроме Швянчёниса) и поезда Vilnius–Kaunas. Уведомления и GPS работают только в APK.</p></div>`;
     return;
   }
   $('#feedsList').innerHTML = FEEDS.map(f => {
@@ -516,7 +541,7 @@ async function loadDemo() {
   const bootMsg = m => { const b = $('#bootMsg'); if (b) b.textContent = m; };
   if (EMBED) {
     document.body.classList.add('embedded');
-    $('#embeddedFlag').innerHTML = `${ICON.shield}<span>Вильнюс — <b>stops.lt от ${EMBED.date.split('-').reverse().join('.')}</b>; пригородные <b>VRAP</b> и рейсы <b>Švenčionys–Vilnius</b> — из таблиц перевозчиков.</span>`;
+    $('#embeddedFlag').innerHTML = `${ICON.shield}<span>Вильнюс — <b>stops.lt от ${EMBED.date.split('-').reverse().join('.')}</b>; пригородные <b>VRAP</b>, <b>Švenčionys–Vilnius</b> и <b>поезда LTG Link</b> — из таблиц перевозчиков.</span>`;
     $('#credits').textContent = 'Расписание: stops.lt (Vilniaus viešasis transportas), версия ' + EMBED.date + '; VRAP — по таблицам vrap.lt. Подложка карты © OpenStreetMap contributors (ODbL).';
   }
   if (DEMO) { bootMsg('Разбираю расписание…'); await new Promise(r => setTimeout(r, 30)); try { await loadDemo(); } catch (e) { console.error(e); bootMsg('Ошибка: ' + e.message); } }

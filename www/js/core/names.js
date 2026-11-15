@@ -168,6 +168,12 @@ export function stopDisplayName(ltName, lat, lon, scope = 'county', overrides = 
   if (overrides[ltName]) return overrides[ltName];
   if (!inPolishZone(lat, lon, scope)) return ltName;
   if (WHOLE[ltName]) return WHOLE[ltName];
+  const rail = ltName.match(/^(.*) gel\. st\.$/);  // железнодорожная станция «X gel. st.»
+  if (rail) {
+    if (rail[1] === 'Vilnius') return 'Dworzec kolejowy w Wilnie';
+    const b = stopDisplayName(rail[1], lat, lon, scope, overrides);
+    return b !== rail[1] ? b + ' (st. kol.)' : ltName;
+  }
   const r = fullTranslate(ltName, scope);
   return r || ltName; // если перевести целиком не получилось — оставляем литовское, без «гибридов»
 }
