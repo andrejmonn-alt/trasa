@@ -217,3 +217,13 @@ body.embedded .embedded-flag{display:flex;gap:10px;align-items:center;background
 @media (min-width:720px){.page{padding-left:calc(50% - 330px);padding-right:calc(50% - 330px)}.hero{margin:0;border-radius:0 0 24px 24px}}
 body.embedded .embedded-flag svg{font-size:22px;flex:none;color:var(--express)}
 label.switch span{color:var(--ink);font-size:14px;margin:0}
+
+.veh-canvas{position:absolute;left:0;top:0;z-index:450;pointer-events:none}
+.ride-banner{display:none;position:absolute;left:10px;right:10px;top:52px;z-index:620;background:#fff;border-radius:16px;padding:10px 12px;box-shadow:0 8px 24px rgba(13,22,48,.22);font-size:13px;font-weight:600;color:var(--ink2);gap:10px;align-items:center}
+.ride-banner.on{display:flex}
+.ride-banner .rb-main{flex:1;min-width:0}
+.ride-banner .rb-title{font-weight:800;color:var(--ink);font-size:14px;margin-bottom:2px}
+.ride-banner button{flex:none}
+.map-legend{position:absolute;left:10px;bottom:24px;z-index:500;background:rgba(255,255,255,.9);border-radius:10px;padding:4px 8px;font-size:11px;font-weight:600;color:var(--mute);pointer-events:none}
+.ride-banner .badge{max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:middle;display:inline-block}
+.ride-banner .rb-title{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}

@@ -7,6 +7,7 @@ import * as P from './platform.js';
 import { journeyNotifications, legInfo } from './notify.js';
 import * as M from './map.js';
 import { ICON, CAT_ICON } from './icons.js';
+import { findTrip } from './core/vehicles.js';
 
 // ---------------- источники данных
 const FEEDS = [
@@ -92,7 +93,8 @@ async function loadNetwork() {
   const stale = feeds.some(f => Date.now() - f.importedAt > 10 * 86400000);
   $('#netStatus').textContent = `${net.nStops} ост. · ${net.nTrips} рейсов` + (stale ? ' · ⚠ обновите' : '');
   console.log('network built in', Math.round(performance.now() - t), 'ms');
-  if (M.mapState.ready) { M.drawNetwork(net, routePopup); M.onStopClick(stopPopup); }
+  if (M.mapState.ready) { M.drawNetwork(net, routePopup); M.onStopClick(stopPopup); M.startVehicles(net, getTracked, rideBanner); }
+  trackCache.clear();
   if ($('#results').querySelector('#goData')) $('#results').innerHTML = '';
   refreshRepeatPlans();
 }
@@ -270,7 +272,16 @@ function renderResults(ms) {
     const j = js[+card.dataset.k];
     card.addEventListener('click', e => {
       const btn = e.target.closest('[data-act]'), act = btn && btn.dataset.act;
-      if (act === 'map') { showTab('map'); M.showJourney(net, j, lastResults.from, lastResults.to); return; }
+      if (act === 'map') {
+        showTab('map'); M.showJourney(net, j, lastResults.from, lastResults.to);
+        const d = new Date(), today = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+        if (lastResults.midnight.getTime() === today && Date.now() < today + j.arrive * 1000) {
+          const rides = ridesOf(j);
+          trackedManual = { midnight: lastResults.midnight, arrive: j.arrive, legs: j.legs.filter(l => l.type === 'ride').map((l, k) => ({ trip: l.trip, shift: l.shift, i0: l.i0, dep: l.dep, arr: l.arr, i1off: rides[k].i1off })) };
+          setTimeout(() => M.setVehicleFollow(true), 600);
+        }
+        return;
+      }
       if (act === 'remind') { remindSheet(j); return; }
       const more = e.target.closest('.more'); if (more) { more.closest('.tl').classList.toggle('show'); return; }
       if (e.target.closest('.legs')) return;
@@ -305,7 +316,7 @@ function remindSheet(j) {
     const items = journeyNotifications(net, j, midnight, id * 10000, settings);
     const n = await P.schedule(items);
     plans.push({ id, kind: 'once', from: epSave(lastResults.from), to: epSave(lastResults.to), date: midnight.getTime(), leave: j.leave, arrive: j.arrive,
-      summary: summary(j), created: Date.now() });
+      summary: summary(j), rides: ridesOf(j), created: Date.now() });
     savePlans(); closeSheet(); toast(`Готово: ${n} уведомлений запланировано`);
   };
   b.querySelector('#rRepeat').onclick = async () => {
@@ -317,6 +328,59 @@ function remindSheet(j) {
     const n = await scheduleRepeat(p);
     closeSheet(); toast(`Регулярная поездка сохранена: ${n} уведомлений на неделю вперёд`);
   };
+}
+function ridesOf(j) {
+  return j.legs.filter(l => l.type === 'ride').map(l => {
+    const r = net.tripRoute[l.trip];
+    return { route: net.routeName[r], short: net.routeShort[r], from: net.ltName[net.stStop[l.i0]], dep: l.dep, shift: l.shift, arr: l.arr, i1off: l.i1 - l.i0 };
+  });
+}
+// ---- слежение «где мой автобус»
+let trackedManual = null;
+const trackCache = new Map();
+function resolveRides(key, midnight, rides) {
+  if (trackCache.has(key)) return trackCache.get(key);
+  const legs = [];
+  for (const r of rides || []) {
+    const f = findTrip(net, { route: r.route, short: r.short, from: r.from, dep: r.dep - (r.shift || 0) });
+    if (!f) { trackCache.set(key, null); return null; }
+    legs.push({ trip: f.trip, shift: r.shift || 0, i0: f.i0, dep: r.dep, arr: r.arr });
+  }
+  const res = legs.length ? { midnight, legs } : null;
+  trackCache.set(key, res); return res;
+}
+function getTracked() {
+  if (!net) return null;
+  const now = Date.now();
+  if (trackedManual) {
+    const end = trackedManual.midnight.getTime() + trackedManual.arrive * 1000 + 60000;
+    if (now <= end) return trackedManual; else trackedManual = null;
+  }
+  const d = new Date(); const today = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  for (const p of plans) {
+    if (p.hideTrack && now - p.hideTrack < 3 * 3600000) continue;
+    const occ = p.kind === 'once' ? [{ date: p.date, leave: p.leave, arrive: p.arrive, rides: p.rides }] : (p.next || []);
+    for (const o of occ) {
+      if (o.date !== today || !o.rides) continue;
+      if (now < today + (o.leave - 15 * 60) * 1000 || now > today + o.arrive * 1000 + 60000) continue;
+      return resolveRides(p.id + ':' + o.date, new Date(today), o.rides);
+    }
+  }
+  return null;
+}
+function rideBanner(tr, notFollowing) {
+  const el = $('#rideBanner'); if (!el) return;
+  if (!tr) { el.classList.remove('on'); return; }
+  const leg = tr.leg, r = net.tripRoute[tr.trip], i = legInfo(net, { trip: tr.trip, shift: tr.shift, i0: leg.i0, i1: Math.min(net.tripOff[tr.trip + 1] - 1, leg.i0 + (leg.i1off || 999)) });
+  const nm = net.routeShort[r] || net.routeName[r];
+  const body = tr.waiting
+    ? `Ещё не отправился · ${fmtTime(leg.dep)} с «${esc(net.name[net.stStop[leg.i0]])}»`
+    : `${tr.dwell ? 'Стоит' : 'Следующая'}: «${esc(net.name[net.stStop[tr.next]])}» в ${fmtTime(tr.nextArr)}`;
+  el.innerHTML = `<div class="rb-main"><div class="rb-title"><span class="badge ${net.routeCat[r]}">${esc(nm)}</span> → ${esc(i.to)} в ${fmtTime(leg.arr)}</div>${body}</div>
+    ${notFollowing ? '<button class="btn small" id="rbFollow">◎ Следить</button>' : ''}<button class="btn small ghost" id="rbClose">✕</button>`;
+  el.classList.add('on');
+  const f = el.querySelector('#rbFollow'); if (f) f.onclick = () => M.setVehicleFollow(true);
+  el.querySelector('#rbClose').onclick = () => { trackedManual = null; for (const p of plans) p.hideTrack = Date.now(); el.classList.remove('on'); M.setVehicleFollow(false); };
 }
 function summary(j) {
   return j.legs.filter(l => l.type === 'ride').map(l => { const i = legInfo(net, l); return { cat: i.cat, name: i.short || i.route }; });
@@ -335,7 +399,7 @@ async function scheduleRepeat(p) {
     const j = js[0]; if (!j) continue;
     if (day.getTime() + j.leave * 1000 < Date.now()) continue;
     total += await P.schedule(journeyNotifications(net, j, day, p.id * 10000 + d * 1000, settings));
-    p.next.push({ date: day.getTime(), leave: j.leave, arrive: j.arrive, summary: summary(j) });
+    p.next.push({ date: day.getTime(), leave: j.leave, arrive: j.arrive, summary: summary(j), rides: ridesOf(j) });
   }
   p.scheduledAt = Date.now(); savePlans();
   return total;
