@@ -1,0 +1,14 @@
+import { readFileSync } from 'fs';
+import { importGtfs } from '../www/js/core/gtfs.js';
+import { buildNetwork, searchGroups } from '../www/js/core/network.js';
+import { plan, fmtTime } from '../www/js/core/router.js';
+const b = readFileSync(new URL('scale.zip', import.meta.url)); const ab = b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength);
+let t = performance.now();
+const f = await importGtfs(ab, { id: 'x', kind: 'city', filter: 'none' });
+console.log('import', Math.round(performance.now() - t), 'ms', f.counts);
+t = performance.now(); const net = buildNetwork([f]); console.log('network', Math.round(performance.now() - t), 'ms, footpaths', net.fpTo.length);
+const d = new Date(2026, 10, 16);
+t = performance.now();
+const js = plan(net, d, 8 * 3600, [{ stop: 5, walk: 0 }], [{ stop: 900, walk: 0 }], { buffer: 120 });
+console.log('plan', Math.round(performance.now() - t), 'ms', js.map(j => fmtTime(j.leave) + '→' + fmtTime(j.arrive) + ' tr' + j.transfers));
+console.log('heap MB', Math.round(process.memoryUsage().heapUsed / 1e6));

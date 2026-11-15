@@ -1,0 +1,26 @@
+import { chromium } from '/opt/npm-tools/node_modules/playwright/index.mjs';
+const b = await chromium.launch();
+const pg = await b.newPage({ viewport: { width: 400, height: 820 } });
+pg.on('pageerror', e => console.log('PAGEERR', e.message));
+await pg.clock.install({ time: new Date(2026, 10, 16, 7, 0) });
+await pg.goto('http://localhost:8765/index.html'); await pg.waitForTimeout(800);
+await pg.click('[data-tab=data]');
+await pg.setInputFiles('[data-up=vilnius]', 'test/city.zip'); await pg.waitForTimeout(1500);
+await pg.setInputFiles('[data-up=ltsar]', 'test/intercity.zip'); await pg.waitForTimeout(1500);
+const out = await pg.evaluate(async () => {
+  const { journeyNotifications } = await import('./js/notify.js');
+  const { searchGroups } = await import('./js/core/network.js');
+  const { plan } = await import('./js/core/router.js');
+  const net = window.__trasa.net;
+  const A = searchGroups(net,'dworzec')[0].stops.map(s=>({stop:s,walk:0})), B = searchGroups(net,'saulet')[0].stops.map(s=>({stop:s,walk:0}));
+  const d = new Date(2026,10,16);
+  const j = plan(net, d, 8*3600, A, B, {buffer:120})[0];
+  return journeyNotifications(net, j, d, 10000, {perStop:true}).map(n => n.at.toTimeString().slice(0,5)+' | '+n.title+' | '+n.body);
+});
+console.log(out.join('\n'));
+await pg.click('[data-tab=route]');
+await pg.fill('#fromInput', 'dwor'); await pg.waitForTimeout(200); await pg.click('#fromSugg div >> nth=0');
+await pg.fill('#toInput', 'svenc'); await pg.waitForTimeout(200); await pg.click('#toSugg div >> nth=0');
+await pg.click('#searchBtn'); await pg.waitForTimeout(500); await pg.click('.res >> nth=0');
+await pg.screenshot({ path: 'test/shot_route2.png' });
+await b.close();

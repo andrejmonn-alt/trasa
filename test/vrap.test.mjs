@@ -1,0 +1,21 @@
+import { readFileSync } from 'fs';
+import { importGtfs } from '../www/js/core/gtfs.js';
+import { buildNetwork, searchGroups } from '../www/js/core/network.js';
+import { plan, fmtTime, rideStops } from '../www/js/core/router.js';
+const ab = p => { const b = readFileSync(p); return b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength); };
+const city = await importGtfs(ab('/home/claude/html/vilnius.zip'), { id: 'vilnius', kind: 'city', filter: 'none' });
+const vr = await importGtfs(ab('/home/claude/vrap/vrap.zip'), { id: 'vrap', kind: 'regional', filter: 'none' });
+console.log('vrap', vr.counts, vr.dateRange);
+const net = buildNetwork([city, vr]);
+const show = (title, a, b, d, t) => {
+  const A = searchGroups(net, a)[0], B = searchGroups(net, b)[0];
+  console.log('\n== ' + title + ': ' + A.name + ' → ' + B.name);
+  const js = plan(net, d, t, A.stops.map(s=>({stop:s,walk:0})), B.stops.map(s=>({stop:s,walk:0})), {buffer:120, count:3});
+  for (const j of js) console.log(' ', fmtTime(j.leave), '→', fmtTime(j.arrive), j.legs.map(l => l.type==='ride' ? `[${net.routeShort[net.tripRoute[l.trip]]} ${fmtTime(l.dep)} ${net.name[net.stStop[l.i0]]}→${net.name[net.stStop[l.i1]]} ${fmtTime(l.arr)}]` : `walk${Math.round(l.dur/60)}`).join(' '));
+};
+show('Пн утро', 'stotis', 'niemenczyn', new Date(2026,10,16), 16*3600);
+show('Сб', 'kalvariju turgus', 'niemenczyn', new Date(2026,10,21), 12*3600);
+show('Пн', 'antokol', 'suzany', new Date(2026,10,16), 9*3600);
+show('Пн в Вильнюс', 'niemenczyn', 'stotis', new Date(2026,10,16), 7*3600);
+show('Вс к Бездонам', 'stotis', 'bezdany', new Date(2026,10,22), 10*3600);
+show('Пн Pailgė', 'zirmunu ziedas', 'pailge', new Date(2026,10,16), 14*3600);

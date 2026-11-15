@@ -1,0 +1,23 @@
+{
+  "name": "trasa",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Trasa — общественный транспорт Вильнюса и Вильнюсского края, с напоминаниями по расписанию",
+  "scripts": {
+    "vendor": "node scripts/copy-vendor.js",
+    "android:init": "npx cap add android && node scripts/patch-android.js",
+    "android:sync": "npx cap sync android",
+    "test": "node test/core.test.mjs"
+  },
+  "dependencies": {
+    "@capacitor/android": "^6.2.0",
+    "@capacitor/core": "^6.2.0",
+    "@capacitor/filesystem": "^6.0.3",
+    "@capacitor/geolocation": "^6.1.0",
+    "@capacitor/local-notifications": "^6.1.2",
+    "leaflet": "^1.9.4"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^6.2.0"
+  }
+}

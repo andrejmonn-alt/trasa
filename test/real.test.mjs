@@ -1,0 +1,17 @@
+import { readFileSync } from 'fs';
+import { importGtfs } from '../www/js/core/gtfs.js';
+import { buildNetwork, searchGroups } from '../www/js/core/network.js';
+import { plan, fmtTime, rideStops } from '../www/js/core/router.js';
+const b = readFileSync(process.argv[2]); const ab = b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength);
+let t = performance.now();
+const f = await importGtfs(ab, { id: 'vilnius', kind: 'city', filter: 'none' });
+console.log('import', Math.round(performance.now() - t), 'ms', f.counts, f.dateRange, 'cats', [...new Set(f.routes.cat)]);
+t = performance.now(); const net = buildNetwork([f]); console.log('net', Math.round(performance.now() - t), 'ms groups', net.groups.length);
+for (const q of ['dworzec','stotis','santar','saulet','zirmun','antok','pasila','grigisk']) console.log(q, '=>', searchGroups(net, q, 4).map(g => g.name + ' [' + g.lt + ']').join(' | '));
+const d = new Date(2026, 10, 16);
+const A = searchGroups(net,'stotis')[0].stops.map(s=>({stop:s,walk:0})), B = searchGroups(net,'saulet')[0].stops.map(s=>({stop:s,walk:0}));
+t = performance.now(); const js = plan(net, d, 8*3600, A, B, {buffer:120});
+console.log('plan', Math.round(performance.now()-t),'ms');
+for (const j of js) console.log(fmtTime(j.leave),'→',fmtTime(j.arrive), j.legs.map(l=>l.type==='ride'? net.routeShort[net.tripRoute[l.trip]]+'('+net.routeCat[net.tripRoute[l.trip]]+') '+net.name[net.stStop[l.i0]]+'→'+net.name[net.stStop[l.i1]] : 'walk').join(' + '));
+const names = new Set(); for (let s=0;s<net.nStops;s++) names.add(net.ltName[s]+' => '+net.name[s]);
+console.log([...names].slice(0,40).join('\n'));

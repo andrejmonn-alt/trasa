@@ -1,0 +1,13 @@
+{
+  "appId": "lt.trasa.app",
+  "appName": "Trasa",
+  "webDir": "www",
+  "android": {
+    "allowMixedContent": false
+  },
+  "plugins": {
+    "LocalNotifications": {
+      "iconColor": "#14213d"
+    }
+  }
+}

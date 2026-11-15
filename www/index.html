@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0b1736">
+<title>Trasa — транспорт Вильнюсского края</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap">
+<link rel="stylesheet" href="vendor/leaflet/leaflet.css">
+<link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+<div id="boot" class="boot"><div class="boot-logo"><i></i><i></i><i></i></div><div class="boot-title">Trasa</div><div class="boot-sub" id="bootMsg">Загрузка…</div></div>
+
+<header class="top">
+  <div class="brand"><span class="logo"><i></i><i></i><i></i></span><div><b>Trasa</b><small>Wilno · Wileńszczyzna</small></div></div>
+  <div id="netStatus" class="net-status">…</div>
+</header>
+
+<main>
+  <!-- МАРШРУТ -->
+  <section id="page-route" class="page active">
+    <div class="hero">
+      <div class="hero-title">Куда едем?</div>
+      <div class="card form">
+        <div class="ab-rail"><span class="dot a"></span><span class="rail-line"></span><span class="dot b"></span></div>
+        <div class="fields">
+          <div class="field">
+            <input id="fromInput" placeholder="Откуда — остановка или город" autocomplete="off">
+            <button class="icon" data-gps="from" title="Моё место" data-ico="locate"></button>
+            <button class="icon" data-pick="from" title="Выбрать на карте" data-ico="map"></button>
+            <div class="sugg" id="fromSugg"></div>
+          </div>
+          <div class="field">
+            <input id="toInput" placeholder="Куда — остановка или город" autocomplete="off">
+            <button class="icon" data-gps="to" title="Моё место" data-ico="locate"></button>
+            <button class="icon" data-pick="to" title="Выбрать на карте" data-ico="map"></button>
+            <div class="sugg" id="toSugg"></div>
+          </div>
+        </div>
+        <button class="swap" id="swapBtn" title="Поменять местами" data-ico="swap"></button>
+        <div class="when">
+          <label><span>Дата</span><input type="date" id="dateInput"></label>
+          <label><span>Отправление</span><input type="time" id="timeInput"></label>
+          <button class="btn ghost" id="nowBtn">Сейчас</button>
+        </div>
+        <button class="btn primary wide" id="searchBtn"><span data-ico="search"></span> Найти маршрут</button>
+      </div>
+    </div>
+    <div class="embedded-flag" id="embeddedFlag"></div>
+    <div id="results"></div>
+  </section>
+
+  <!-- КАРТА -->
+  <section id="page-map" class="page">
+    <div id="map"></div>
+    <div class="chips" id="catChips"></div>
+    <div class="pick-banner" id="pickBanner">Нажмите на карту, чтобы выбрать точку <button class="btn small" id="pickCancel">Отмена</button></div>
+    <button class="fab ctrl" id="ctrlFab" title="Отметить контролёров"><span data-ico="shield"></span><b>К</b></button>
+    <button class="fab loc" id="locFab" title="Где я" data-ico="locate"></button>
+  </section>
+
+  <!-- ПОЕЗДКИ -->
+  <section id="page-plans" class="page">
+    <div class="page-head"><h2>Поездки</h2><p class="hint">Напоминания за 60, 30, 10 и 1 минуту до выхода, затем посадка, каждая проезжаемая остановка, предупреждение перед выходом, пересадки и конечная. Время — по расписанию.</p></div>
+    <div id="plansList"></div>
+  </section>
+
+  <!-- ДАННЫЕ И НАСТРОЙКИ -->
+  <section id="page-data" class="page">
+    <div class="page-head"><h2>Расписания</h2></div>
+    <div id="feedsList"></div>
+    <div class="row" id="updateRow">
+      <button class="btn primary" id="updateBtn">Скачать / обновить выбранные</button>
+    </div>
+    <pre id="log" class="log"></pre>
+
+    <div class="page-head"><h2>Настройки</h2></div>
+    <div class="card settings">
+      <label class="switch"><input type="checkbox" id="setPerStop"><span>Уведомлять о каждой проезжаемой остановке</span></label>
+      <label><span>Запас на пересадку, мин</span><input type="number" id="setBuffer" min="0" max="15" step="1"></label>
+      <label><span>Максимум пешком до остановки, м</span><input type="number" id="setWalk" min="200" max="3000" step="100"></label>
+      <label><span>Отметки контролёров видны, часов</span><input type="number" id="setMarkH" min="1" max="24"></label>
+      <label><span>Польские названия</span>
+        <select id="setScope">
+          <option value="county">Весь Вильнюсский край (бывший уезд)</option>
+          <option value="strict">Только Вильнюс и Вильнюсский район</option>
+        </select>
+      </label>
+      <div class="row">
+        <button class="btn" id="testNotif">Тест уведомления</button>
+        <button class="btn" id="exactBtn">Точные будильники…</button>
+      </div>
+      <div id="exactStatus" class="hint"></div>
+    </div>
+
+    <div class="page-head"><h2>Названия остановок</h2></div>
+    <div class="card">
+      <p class="hint">Польский словарь неполный: если остановку нельзя перевести целиком, она остаётся по-литовски. Впишите своё название — оно сохранится на этом устройстве.</p>
+      <input id="nameSearch" placeholder="Поиск остановки (по-литовски или по-польски)">
+      <div id="nameList"></div>
+    </div>
+    <p class="hint small" id="credits">Данные: stops.lt (Vilniaus viešasis transportas), visimarsrutai.lt (LTSA). Карта © OpenStreetMap contributors, © CARTO.</p>
+  </section>
+</main>
+
+<nav class="tabs">
+  <button data-tab="route" class="active"><span data-ico="route"></span>Маршрут</button>
+  <button data-tab="map"><span data-ico="map"></span>Карта</button>
+  <button data-tab="plans"><span data-ico="clock"></span>Поездки</button>
+  <button data-tab="data"><span data-ico="gear"></span>Данные</button>
+</nav>
+
+<div id="sheet" class="sheet hidden"><div class="sheet-body" id="sheetBody"></div></div>
+<div id="toast" class="toast"></div>
+
+<script src="vendor/leaflet/leaflet.js"></script>
+<script type="module" src="js/app.js"></script>
+</body>
+</html>
