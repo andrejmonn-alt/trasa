@@ -1,7 +1,7 @@
 # GTFS для рейсов Švenčionys – Pabradė – Vilnius по тексту страницы
 # svencionys.lt «Eismo tvarkaraščiai» (прислан пользователем 2026-11-15).
 # Официальны только времена отправления из Švenčionys AS, Pabradė и Vilniaus AS;
-# остальные остановки (Nemenčinė, Pailgė, Pavoverė, Zalavas, Sariai) и время
+# все рейсы идут через Неменчине (уточнено пользователем); остальные остановки (Nemenčinė, Pailgė, Pavoverė, Zalavas, Sariai) и время
 # прибытия рассчитаны по типичному времени в пути — помечены как примерные.
 import zipfile, datetime
 
@@ -17,8 +17,8 @@ S = {  # координаты: городские остановки — точ�
  'Ignalina': (55.3405, 26.1650), 'Visaginas': (55.5960, 26.4370), 'Molėtai': (55.2300, 25.4200),
 }
 # шаблоны: (остановка, минут от начала); 'P' — опорная Pabradė
-EXP_OUT = [('Vilniaus autobusų stotis', 0), ('Pailgė', 38), ('Pabradė', 55), ('Pavoverė', 60), ('Zalavas', 70), ('Sariai', 80), ('Švenčionys', 92)]
-EXP_IN = [('Švenčionys', 0), ('Sariai', 12), ('Zalavas', 22), ('Pavoverė', 31), ('Pabradė', 35), ('Pailgė', 52), ('Vilniaus autobusų stotis', 93)]
+EXP_OUT = [('Vilniaus autobusų stotis', 0), ('Nemenčinės plentas', 15), ('Nemenčinė', 30), ('Pailgė', 40), ('Pabradė', 55), ('Pavoverė', 60), ('Zalavas', 70), ('Sariai', 80), ('Švenčionys', 92)]
+EXP_IN = [('Švenčionys', 0), ('Sariai', 12), ('Zalavas', 22), ('Pavoverė', 31), ('Pabradė', 35), ('Pailgė', 50), ('Nemenčinė', 60), ('Nemenčinės plentas', 75), ('Vilniaus autobusų stotis', 93)]
 # местный рейс «по деревням»: Вильнюс — Nemenčinės pl. — коридор 171 — Неменчине — дорога 160 — Pabradė
 VIA = [('Nemenčinės plentas', 20), ('Kiškių st.', 23), ('Smėlynė', 26), ('Veržuvos st.', 28), ('Karačiūnai', 29), ('Šilas', 30),
        ('Antaviliai', 32), ('Kreivalaužiai', 37), ('Vėtrungė', 39), ('Nemenčinė', 41), ('Girininkija', 44), ('Pakrauglė', 47),
