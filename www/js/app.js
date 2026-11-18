@@ -8,6 +8,8 @@ import { journeyNotifications, legInfo } from './notify.js';
 import * as M from './map.js';
 import { ICON, CAT_ICON } from './icons.js';
 import { findTrip } from './core/vehicles.js';
+import { startLive, LIVE, pollNow } from './live.js';
+import { getTicket, activateTicket, clearTicket, ticketHint, ticketJourneyNotes } from './ticket.js';
 
 // ---------------- источники данных
 const FEEDS = [
@@ -94,6 +96,7 @@ async function loadNetwork() {
   $('#netStatus').textContent = `${net.nStops} ост. · ${net.nTrips} рейсов` + (stale ? ' · ⚠ обновите' : '');
   console.log('network built in', Math.round(performance.now() - t), 'ms');
   if (M.mapState.ready) { M.drawNetwork(net, routePopup); M.onStopClick(stopPopup); M.startVehicles(net, getTracked, rideBanner); }
+  startLive(net, { getTracked, update: L => { if (!L.err) M.setRealtime(L.matched); }, alert: (t, b) => toast(t + ' — ' + b, 6000) });
   trackCache.clear();
   if ($('#results').querySelector('#goData')) $('#results').innerHTML = '';
   refreshRepeatPlans();
@@ -246,6 +249,8 @@ function renderResults(ms) {
       <div class="res-head"><div class="res-time">${fmtTime(j.leave)}<span class="arrow"> → </span>${fmtTime(j.arrive)}</div><span class="pill">${fmtDur(j.arrive - j.leave)}</span></div>
       <div class="res-sub"><div class="res-chips">${parts.join('<span class="sep">›</span>')}</div>
       <div class="res-meta">${soon} · ${j.transfers ? j.transfers + ' перес.' : 'без пересадок'}</div></div>`;
+    const th = ticketHint(net, rides, midnight, getTicket());
+    if (th) h += `<div class="tkhint ${th.ok ? '' : 'bad'}">🎫 ${esc(th.text)}</div>`;
     const near = marksNear(j);
     if (near.length) h += `<div class="warn">${ICON.shield}<span>Недавно отмечали контролёров: ${near.slice(0, 3).map(esc).join(', ')}</span></div>`;
     // таймлайн
@@ -267,7 +272,7 @@ function renderResults(ms) {
     if (j.egressWalk >= 60) tl += `<div class="tl">${row(fmtTime(j.arrive), 'walk last', 'var(--walk)', '<span class="node" style="--c:var(--trolley)"></span>', `<div class="walk-info">${ICON.walk} пешком ~${W(j.egressWalk)} мин</div><b>Финиш</b>`)}</div>`;
     h += `<div class="legs">${tl}</div><div class="actions"><button class="btn small" data-act="map">${ICON.map} На карте</button><button class="btn small primary" data-act="remind">${ICON.bell} Напоминать</button></div></div>`;
     return h;
-  }).join('') + `<p class="hint small">Найдено за ${ms} мс · время по расписанию</p>`;
+  }).join('') + `<p class="hint small">${ms != null ? 'Найдено за ' + ms + ' мс · ' : ''}время по расписанию</p>`;
   document.querySelectorAll('.res').forEach(card => {
     const j = js[+card.dataset.k];
     card.addEventListener('click', e => {
@@ -279,6 +284,7 @@ function renderResults(ms) {
           const rides = ridesOf(j);
           trackedManual = { midnight: lastResults.midnight, arrive: j.arrive, legs: j.legs.filter(l => l.type === 'ride').map((l, k) => ({ trip: l.trip, shift: l.shift, i0: l.i0, dep: l.dep, arr: l.arr, i1off: rides[k].i1off })) };
           setTimeout(() => M.setVehicleFollow(true), 600);
+          ticketJourneyNotes(net, trackedManual).catch(() => {}); pollNow();
         }
         return;
       }
@@ -344,9 +350,10 @@ function resolveRides(key, midnight, rides) {
   for (const r of rides || []) {
     const f = findTrip(net, { route: r.route, short: r.short, from: r.from, dep: r.dep - (r.shift || 0) });
     if (!f) { trackCache.set(key, null); return null; }
-    legs.push({ trip: f.trip, shift: r.shift || 0, i0: f.i0, dep: r.dep, arr: r.arr });
+    legs.push({ trip: f.trip, shift: r.shift || 0, i0: f.i0, dep: r.dep, arr: r.arr, i1off: r.i1off });
   }
   const res = legs.length ? { midnight, legs } : null;
+  if (res) ticketJourneyNotes(net, res).catch(() => {});
   trackCache.set(key, res); return res;
 }
 function getTracked() {
@@ -373,15 +380,49 @@ function rideBanner(tr, notFollowing) {
   if (!tr) { el.classList.remove('on'); return; }
   const leg = tr.leg, r = net.tripRoute[tr.trip], i = legInfo(net, { trip: tr.trip, shift: tr.shift, i0: leg.i0, i1: Math.min(net.tripOff[tr.trip + 1] - 1, leg.i0 + (leg.i1off || 999)) });
   const nm = net.routeShort[r] || net.routeName[r];
-  const body = tr.waiting
-    ? `Ещё не отправился · ${fmtTime(leg.dep)} с «${esc(net.name[net.stStop[leg.i0]])}»`
-    : `${tr.dwell ? 'Стоит' : 'Следующая'}: «${esc(net.name[net.stStop[tr.next]])}» в ${fmtTime(tr.nextArr)}`;
-  el.innerHTML = `<div class="rb-main"><div class="rb-title"><span class="badge ${net.routeCat[r]}">${esc(nm)}</span> → ${esc(i.to)} в ${fmtTime(leg.arr)}</div>${body}</div>
+  const d = tr.live ? tr.delay : 0;
+  const dchip = tr.live ? (d >= 60 ? ` <span class="dl ${d >= 300 ? 'bad' : ''}">+${Math.round(d / 60)} мин</span>` : ' <span class="dl ok">по графику</span>') : '';
+  const from = esc(net.name[net.stStop[leg.i0]]);
+  let body = tr.waiting
+    ? (tr.live ? `Едет к вам: на «${from}» ~${fmtTime(leg.dep + Math.max(0, d))}${dchip}` : `Ещё не отправился · ${fmtTime(leg.dep)} с «${from}»`)
+    : `${tr.dwell ? 'Стоит' : 'Следующая'}: «${esc(net.name[net.stStop[tr.next]])}» ${tr.live ? '~' : 'в '}${fmtTime(tr.nextArr)}${dchip}`;
+  const tk = getTicket();
+  if (tk) { const left = Math.round((tk.end - Date.now()) / 60000); body += ` · <span class="dl ${left <= 5 ? 'bad' : 'tk'}">🎫 ${left > 0 ? 'ещё ' + left + ' мин' : 'билет кончился'}</span>`; }
+  el.innerHTML = `<div class="rb-main"><div class="rb-title"><span class="badge ${net.routeCat[r]}">${esc(nm)}</span> → ${esc(i.to)} ${tr.live && d >= 60 ? '~' + fmtTime(leg.arr + d) : 'в ' + fmtTime(leg.arr)}</div>${body}</div>
     ${notFollowing ? '<button class="btn small" id="rbFollow">◎ Следить</button>' : ''}<button class="btn small ghost" id="rbClose">✕</button>`;
   el.classList.add('on');
   const f = el.querySelector('#rbFollow'); if (f) f.onclick = () => M.setVehicleFollow(true);
   el.querySelector('#rbClose').onclick = () => { trackedManual = null; for (const p of plans) p.hideTrack = Date.now(); el.classList.remove('on'); M.setVehicleFollow(false); };
 }
+function renderTicketBar() {
+  const el = $('#ticketBar'); if (!el) return;
+  const t = getTicket();
+  if (t) {
+    const left = Math.ceil((t.end - Date.now()) / 60000);
+    el.innerHTML = `<span class="tk-ico">🎫</span><div class="tk-main"><b>${t.min}-минутный билет</b><span>${left > 0 ? `ещё ${left} мин · до ${new Date(t.end).toTimeString().slice(0, 5)}` : 'закончился'}</span></div><button class="btn small ghost" id="tkClear">Сбросить</button>`;
+    el.className = 'ticket-bar on' + (left <= 5 ? ' low' : '');
+    el.querySelector('#tkClear').onclick = async () => { await clearTicket(); renderTicketBar(); if (lastResults) renderResults(); };
+  } else {
+    el.innerHTML = `<span class="tk-ico">🎫</span><div class="tk-main"><b>Активировали билет в JUDU?</b><span>Напомню, когда он будет кончаться</span></div><button class="btn small" data-tk="30">30 мин</button><button class="btn small" data-tk="60">60 мин</button>`;
+    el.className = 'ticket-bar';
+    el.querySelectorAll('[data-tk]').forEach(b => b.onclick = () => ticketSheet(+b.dataset.tk));
+  }
+}
+function ticketSheet(min) {
+  const b = sheet(`<h3>${min}-минутный билет</h3>
+    <p class="hint">Trasa не видит JUDU — отметьте, когда активировали. Напомню за 5 и за 1 минуту до конца, а если вы едете по маршруту — предупрежу, если билет кончится в пути или до пересадки.</p>
+    <div class="tk-ago">${[0, 2, 5, 10, 15].map(a => `<button class="btn ${a ? '' : 'primary'}" data-ago="${a}">${a ? a + ' мин назад' : 'Только что'}</button>`).join('')}</div>
+    <button class="btn ghost wide" id="tkCancel">Отмена</button>`);
+  b.querySelector('#tkCancel').onclick = closeSheet;
+  b.querySelectorAll('[data-ago]').forEach(x => x.onclick = async () => {
+    const t = await activateTicket(min, Date.now() - +x.dataset.ago * 60000);
+    closeSheet(); renderTicketBar(); if (lastResults) renderResults();
+    const tr = getTracked(); if (tr) ticketJourneyNotes(net, tr).catch(() => {});
+    toast(`Билет до ${new Date(t.end).toTimeString().slice(0, 5)} — напомню заранее`);
+  });
+}
+setInterval(renderTicketBar, 20000);
+setTimeout(renderTicketBar, 0);
 function summary(j) {
   return j.legs.filter(l => l.type === 'ride').map(l => { const i = legInfo(net, l); return { cat: i.cat, name: i.short || i.route }; });
 }

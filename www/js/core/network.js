@@ -34,10 +34,10 @@ export function reconcileFeeds(feeds, approxIds) {
     }
     // 2) какие маршруты оставить
     const keepR = f.routes.short.map(sh => !(sh && realShort.has(norm(sh))));
-    const tr = { route: [], service: [], headsign: [], off: [] }, st = { stop: [], arr: [], dep: [] };
+    const tr = { route: [], service: [], headsign: [], off: [], gid: [] }, st = { stop: [], arr: [], dep: [] };
     for (let t = 0; t < f.trips.route.length; t++) {
       if (!keepR[f.trips.route[t]]) continue;
-      tr.route.push(f.trips.route[t]); tr.service.push(f.trips.service[t]); tr.headsign.push(f.trips.headsign[t]); tr.off.push(st.stop.length);
+      tr.route.push(f.trips.route[t]); tr.service.push(f.trips.service[t]); tr.headsign.push(f.trips.headsign[t]); tr.gid.push(f.trips.gid ? f.trips.gid[t] : ''); tr.off.push(st.stop.length);
       for (let i = f.trips.off[t]; i < f.trips.off[t + 1]; i++) { st.stop.push(f.st.stop[i]); st.arr.push(f.st.arr[i]); st.dep.push(f.st.dep[i]); }
     }
     tr.off.push(st.stop.length);
@@ -46,7 +46,7 @@ export function reconcileFeeds(feeds, approxIds) {
       for (let i = 0; i < c.length; i += 2) { const m = moved.get(c[i] + ',' + c[i + 1]); if (m) { c[i] = m[0]; c[i + 1] = m[1]; } }
       return { ...l, coords: c };
     });
-    return { ...f, stops: { ...f.stops, lat, lon }, trips: { ...f.trips, route: Int32Array.from(tr.route), service: Int32Array.from(tr.service), headsign: tr.headsign, off: Int32Array.from(tr.off) },
+    return { ...f, stops: { ...f.stops, lat, lon }, trips: { ...f.trips, route: Int32Array.from(tr.route), service: Int32Array.from(tr.service), headsign: tr.headsign, gid: tr.gid, off: Int32Array.from(tr.off) },
       st: { ...f.st, stop: Int32Array.from(st.stop), arr: Int32Array.from(st.arr), dep: Int32Array.from(st.dep) }, lines };
   });
 }
@@ -63,7 +63,7 @@ export function buildNetwork(feeds, opts = {}) {
     nStops: nS, lat: new Float64Array(nS), lon: new Float64Array(nS),
     ltName: new Array(nS), name: new Array(nS), stopFeed: new Int16Array(nS),
     routeShort: [], routeName: [], routeCat: [], routeFeed: [],
-    tripRoute: new Int32Array(nT), tripSvc: new Int32Array(nT), tripHead: new Array(nT),
+    tripRoute: new Int32Array(nT), tripSvc: new Int32Array(nT), tripHead: new Array(nT), tripGid: new Array(nT),
     tripOff: new Int32Array(nT + 1),
     stStop: new Int32Array(nST), stArr: new Int32Array(nST), stDep: new Int32Array(nST),
     services: [], lines: [], feeds: feeds.map(f => f.id)
@@ -93,6 +93,7 @@ export function buildNetwork(feeds, opts = {}) {
       net.tripRoute[to + t] = ro + f.trips.route[t];
       net.tripSvc[to + t] = svo + f.trips.service[t];
       net.tripHead[to + t] = translatePlaces(f.trips.headsign[t], scope);
+      net.tripGid[to + t] = f.trips.gid ? f.trips.gid[t] || '' : '';
       net.tripOff[to + t] = sto + f.trips.off[t];
     }
     const nst = f.st.stop.length;

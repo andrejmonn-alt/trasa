@@ -177,7 +177,7 @@ export function flyTo(lat, lon, z = 16) { if (map) map.setView([lat, lon], z); }
 export function getCenter() { return map ? map.getCenter() : null; }
 
 // ================= Автобусы на карте (по расписанию) =================
-const V = { net: null, idx: null, idxDay: -1, canvas: null, ctx: null, list: [], timer: null, getTracked: null, follow: true, lastTracked: null, onBanner: null, visible: {} };
+const V = { rt: null, rtAt: 0, net: null, idx: null, idxDay: -1, canvas: null, ctx: null, list: [], timer: null, getTracked: null, follow: true, lastTracked: null, onBanner: null, visible: {} };
 
 export function startVehicles(net, getTracked, onBanner) {
   if (!map) return;
@@ -196,6 +196,15 @@ export function startVehicles(net, getTracked, onBanner) {
   V.timer = setInterval(tickVehicles, 1000);
   tickVehicles();
 }
+// реальное время: matched — Map(trip -> {lat, lon, delay, seg, ...}); null — нет данных
+export function setRealtime(matched) { V.rt = matched; V.rtAt = Date.now(); tickVehicles(); }
+function rtFresh() { return V.rt && Date.now() - V.rtAt < 90000; }
+function isCity(trip) { const n = V.net, r = n.tripRoute[trip]; return n.feeds[n.routeFeed[r]] === 'vilnius'; }
+function liveToPos(m) {
+  const n = V.net, nx = m.seg >= 0 ? m.seg + 1 : -1;
+  return { lat: m.lat, lon: m.lon, at: m.seg, next: nx >= 0 ? nx : n.tripOff[m.trip], nextArr: (nx >= 0 ? n.stArr[nx] : n.stDep[n.tripOff[m.trip]]) + m.shift + m.delay,
+    delay: m.delay, live: true, age: m.age, trip: m.trip, shift: m.shift };
+}
 export function setVehicleFollow(on) { V.follow = on; V.zoomIn = on; tickVehicles(); }
 export function vehiclesSetCat(cat, on) { V.visible[cat] = on; drawVehicles(); }
 
@@ -206,6 +215,18 @@ function tickVehicles() {
   if (V.idxDay !== midnight.getTime()) { V.idx = dayIndex(V.net, midnight); V.idxDay = midnight.getTime(); }
   const t = nowSec(midnight);
   V.list = activeVehicles(V.net, V.idx, t);
+  if (rtFresh()) {
+    const seen = new Set();
+    V.list = V.list.map(v => {
+      const m = V.rt.get(v.trip);
+      if (m) { seen.add(v.trip); return liveToPos(m); }
+      if (isCity(v.trip)) v.ghost = true;
+      return v;
+    });
+    for (const m of V.rt.values()) if (!seen.has(m.trip)) V.list.push(liveToPos(m)); // опаздывающие сверх расписания
+  }
+  const lg = document.querySelector('.map-legend');
+  if (lg) lg.textContent = rtFresh() ? `● GPS · ${Math.round((Date.now() - V.rtAt) / 1000)} с назад · бледные — без сигнала` : 'Положение автобусов — по расписанию';
   // наш рейс
   const tr = V.getTracked ? V.getTracked() : null;
   V.lastTracked = null;
@@ -213,8 +234,9 @@ function tickVehicles() {
     const tt = (Date.now() - tr.midnight.getTime()) / 1000;
     // текущий участок: первый, который ещё не закончился
     const leg = tr.legs.find(l => tt <= V.net.stArr[V.net.tripOff[l.trip + 1] - 1] + l.shift && tt <= l.arr) || tr.legs[tr.legs.length - 1];
-    let p = vehiclePos(V.net, leg.trip, leg.shift, tt);
-    const waiting = !p;
+    const live = rtFresh() && V.rt.get(leg.trip);
+    let p = live ? liveToPos(live) : vehiclePos(V.net, leg.trip, leg.shift, tt);
+    const waiting = !p || (live && p.next <= leg.i0);
     if (!p) { const s = V.net.stStop[leg.i0]; p = { lat: V.net.lat[s], lon: V.net.lon[s], next: leg.i0, nextArr: leg.dep }; }
     V.lastTracked = { ...p, trip: leg.trip, shift: leg.shift, leg, waiting, tt };
     if (V.follow) {
@@ -253,14 +275,17 @@ function drawVehicles() {
     const p = map.latLngToContainerPoint([v.lat, v.lon]);
     if (p.x < -30 || p.y < -30 || p.x > size.x + 30 || p.y > size.y + 30) continue;
     const col = CAT[cat].color;
+    c.globalAlpha = v.ghost ? 0.35 : 1;
     if (!big) { c.fillStyle = col; c.strokeStyle = '#fff'; c.lineWidth = 1.5; c.beginPath(); c.rect(p.x - 3.5, p.y - 3.5, 7, 7); c.fill(); c.stroke(); V.drawn.push({ v, x: p.x, y: p.y }); continue; }
     const txt = label(r), w = Math.max(22, c.measureText(txt).width + 10), h = 18;
     c.shadowColor = 'rgba(0,0,0,.25)'; c.shadowBlur = 4; c.shadowOffsetY = 1;
     rrect(c, p.x - w / 2, p.y - h / 2, w, h, 5); c.fillStyle = col; c.fill();
     c.shadowColor = 'transparent'; c.lineWidth = 1.5; c.strokeStyle = '#fff'; c.stroke();
     c.fillStyle = cat === 'intercity' ? '#2b2100' : '#fff'; c.fillText(txt, p.x, p.y + 0.5);
+    if (v.live && v.delay >= 120) delayTag(c, p.x + w / 2 - 2, p.y - h / 2 - 2, v.delay);
     V.drawn.push({ v, x: p.x, y: p.y });
   }
+  c.globalAlpha = 1;
   if (trk) { // наш автобус — крупнее, с пульсом
     const r = V.net.tripRoute[trk.trip], cat = V.net.routeCat[r], col = CAT[cat].color;
     const p = map.latLngToContainerPoint([trk.lat, trk.lon]);
@@ -272,11 +297,19 @@ function drawVehicles() {
     rrect(c, p.x - w / 2, p.y - h / 2, w, h, 8); c.fillStyle = col; c.fill();
     c.shadowColor = 'transparent'; c.lineWidth = 3; c.strokeStyle = '#1f6fe5'; c.stroke();
     c.fillStyle = cat === 'intercity' ? '#2b2100' : '#fff'; c.fillText(txt, p.x, p.y + 0.5);
+    if (trk.live && trk.delay >= 60) delayTag(c, p.x + w / 2, p.y - h / 2, trk.delay);
     c.font = '800 10px Manrope, system-ui, sans-serif'; c.fillStyle = '#1f6fe5';
     rrect(c, p.x - 14, p.y - h / 2 - 15, 28, 13, 6); c.fillStyle = '#1f6fe5'; c.fill(); c.fillStyle = '#fff'; c.fillText('ВЫ', p.x, p.y - h / 2 - 8.5);
   }
 }
 
+function delayTag(c, x, y, d) {
+  const t = '+' + Math.round(d / 60);
+  c.save(); c.font = '800 9px Manrope, system-ui, sans-serif';
+  const w = c.measureText(t).width + 8;
+  rrect(c, x - w / 2, y - 6, w, 12, 6); c.fillStyle = d >= 300 ? '#c0262d' : '#e8730c'; c.fill();
+  c.fillStyle = '#fff'; c.textAlign = 'center'; c.textBaseline = 'middle'; c.fillText(t, x, y + 0.5); c.restore();
+}
 function vehicleClick(e) {
   if (!V.drawn || !V.drawn.length) return;
   const p = map.latLngToContainerPoint(e.latlng);
@@ -287,6 +320,8 @@ function vehicleClick(e) {
   const last = n.tripOff[v.trip + 1] - 1;
   const html = `<span class="badge ${cat}">${escapeHtml(label(r))}</span> ${escapeHtml(n.routeName[r] !== n.routeShort[r] ? n.routeName[r] : '')}<br>
     → <b>${escapeHtml(n.tripHead[v.trip] || n.name[n.stStop[last]])}</b><br>
-    <small>${v.dwell ? 'стоит' : 'следующая'}: «${escapeHtml(n.name[n.stStop[v.next]])}» в ${fmt(v.nextArr)}<br>конечная в ${fmt(n.stArr[last] + v.shift)} · по расписанию</small>`;
+    <small>${v.dwell ? 'стоит' : 'следующая'}: «${escapeHtml(n.name[n.stStop[v.next]])}» в ${fmt(v.nextArr)}<br>конечная в ${fmt(n.stArr[last] + v.shift + (v.live ? v.delay : 0))} · ${v.live
+      ? `<b style="color:${v.delay >= 120 ? '#c0262d' : '#1f8a3a'}">${v.delay >= 60 ? 'опаздывает на ' + Math.round(v.delay / 60) + ' мин' : v.delay <= -60 ? 'раньше на ' + Math.round(-v.delay / 60) + ' мин' : 'по графику'}</b> (GPS, ${Math.round(v.age)} с назад)`
+      : v.ghost ? 'нет сигнала GPS — по расписанию' : 'по расписанию'}</small>`;
   L.popup().setLatLng([v.lat, v.lon]).setContent(html).openOn(map);
 }

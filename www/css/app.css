@@ -224,6 +224,21 @@ label.switch span{color:var(--ink);font-size:14px;margin:0}
 .ride-banner .rb-main{flex:1;min-width:0}
 .ride-banner .rb-title{font-weight:800;color:var(--ink);font-size:14px;margin-bottom:2px}
 .ride-banner button{flex:none}
-.map-legend{position:absolute;left:10px;bottom:24px;z-index:500;background:rgba(255,255,255,.9);border-radius:10px;padding:4px 8px;font-size:11px;font-weight:600;color:var(--mute);pointer-events:none}
+.map-legend{position:absolute;left:10px;right:96px;bottom:24px;width:max-content;max-width:calc(100% - 106px);z-index:500;background:rgba(255,255,255,.9);border-radius:10px;padding:4px 8px;font-size:11px;font-weight:600;color:var(--mute);pointer-events:none}
 .ride-banner .badge{max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:middle;display:inline-block}
 .ride-banner .rb-title{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+.ticket-bar{display:flex;align-items:center;gap:8px;margin:12px 16px 0;background:#fff;border-radius:16px;padding:10px 12px;box-shadow:0 2px 10px rgba(13,22,48,.08);font-size:13px}
+.ticket-bar .tk-ico{font-size:22px}
+.ticket-bar .tk-main{flex:1;min-width:0;display:flex;flex-direction:column;gap:1px}
+.ticket-bar .tk-main b{color:var(--ink);font-size:14px}
+.ticket-bar .tk-main span{color:var(--mute);font-weight:600}
+.ticket-bar.on{background:#eef5ff;border:1.5px solid #bcd4ff}
+.ticket-bar.low{background:#fff1f0;border-color:#f4b6b2}
+.ticket-bar .btn.small{flex:none}
+.tk-ago{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0 14px}
+.tkhint{margin:8px 14px 0;font-size:12.5px;font-weight:600;color:#2a5ca8;background:#eef5ff;border-radius:10px;padding:6px 10px}
+.tkhint.bad{color:#a3241f;background:#fff1f0}
+.dl{display:inline-block;font-size:11px;font-weight:800;border-radius:8px;padding:1px 6px;background:#e8730c;color:#fff;vertical-align:1px}
+.dl.bad{background:#c0262d}.dl.ok{background:#1f8a3a}.dl.tk{background:#2a5ca8}
+.ride-banner .rb-main{white-space:normal}

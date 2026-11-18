@@ -70,7 +70,7 @@ export async function importGtfs(buf, feed, progress = () => {}) {
 
   // --- trips
   progress('Рейсы…');
-  const tRoute = [], tSvc = [], tHead = [], tShape = [], tDir = [], tripMap = new Map();
+  const tRoute = [], tSvc = [], tHead = [], tShape = [], tDir = [], tGid = [], tripMap = new Map();
   const svcMap = new Map(), svcIds = [];
   await parseCsvStream(textStream(zip, 'trips.txt'), (r, x) => {
     const ri = routeMap.get(col(r, x, 'route_id'));
@@ -78,7 +78,7 @@ export async function importGtfs(buf, feed, progress = () => {}) {
     if (feed.filter === 'rail' && routes.cat[ri] !== 'train') return;
     const sid = col(r, x, 'service_id');
     if (!svcMap.has(sid)) { svcMap.set(sid, svcIds.length); svcIds.push(sid); }
-    tripMap.set(col(r, x, 'trip_id'), tRoute.length);
+    tripMap.set(col(r, x, 'trip_id'), tRoute.length); tGid.push(feed.kind === 'city' ? col(r, x, 'trip_id') : '');
     tRoute.push(ri); tSvc.push(svcMap.get(sid));
     tHead.push(col(r, x, 'trip_headsign').trim());
     tShape.push(col(r, x, 'shape_id')); tDir.push(+(col(r, x, 'direction_id') || 0));
@@ -147,7 +147,7 @@ export async function importGtfs(buf, feed, progress = () => {}) {
     stops: { id: [], name: [], lat: [], lon: [] },
     routes: { short: routes.short, long: routes.long, cat: routes.cat },
     services,
-    trips: { route: [], service: [], headsign: [], off: [0] },
+    trips: { route: [], service: [], headsign: [], off: [0], gid: [] },
     st: null, lines: []
   };
   const oStop = new IntBuf(N || 1), oArr = new IntBuf(N || 1), oDep = new IntBuf(N || 1);
@@ -180,7 +180,7 @@ export async function importGtfs(buf, feed, progress = () => {}) {
       oStop.push(stopNew[s]); oArr.push(times[i - a][0]); oDep.push(times[i - a][1]);
     }
     out.trips.route.push(tRoute[t]); out.trips.service.push(tSvc[t]);
-    out.trips.headsign.push(tHead[t]); out.trips.off.push(oStop.n);
+    out.trips.headsign.push(tHead[t]); out.trips.off.push(oStop.n); out.trips.gid.push(tGid[t]);
     tripShape.push(tShape[t]); tripDir.push(tDir[t]);
   }
   out.st = { stop: oStop.done(), arr: oArr.done(), dep: oDep.done() };
