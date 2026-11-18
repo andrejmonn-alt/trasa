@@ -8,7 +8,7 @@ import { journeyNotifications, legInfo } from './notify.js';
 import * as M from './map.js';
 import { ICON, CAT_ICON } from './icons.js';
 import { findTrip } from './core/vehicles.js';
-import { startLive, LIVE, pollNow } from './live.js';
+import { startLive, LIVE, pollNow, liveSay } from './live.js';
 import { getTicket, activateTicket, clearTicket, ticketHint, ticketJourneyNotes } from './ticket.js';
 
 // ---------------- источники данных
@@ -96,7 +96,7 @@ async function loadNetwork() {
   $('#netStatus').textContent = `${net.nStops} ост. · ${net.nTrips} рейсов` + (stale ? ' · ⚠ обновите' : '');
   console.log('network built in', Math.round(performance.now() - t), 'ms');
   if (M.mapState.ready) { M.drawNetwork(net, routePopup); M.onStopClick(stopPopup); M.startVehicles(net, getTracked, rideBanner); }
-  startLive(net, { getTracked, update: L => { if (!L.err) M.setRealtime(L.matched); }, alert: (t, b) => toast(t + ' — ' + b, 6000) });
+  startLive(net, { getTracked, reroute: rerouteHook, update: L => { if (!L.err) M.setRealtime(L.matched); }, alert: (t, b) => toast(t + ' — ' + b, 6000) });
   trackCache.clear();
   if ($('#results').querySelector('#goData')) $('#results').innerHTML = '';
   refreshRepeatPlans();
@@ -201,6 +201,20 @@ function findJourneys(from, to, midnight, t0, count = 4) {
   if (!egress.length) throw new Error('Рядом с концом пути нет остановок');
   return plan(net, midnight, t0, access, egress, { buffer: settings.buffer * 60, count });
 }
+// «Приехать к»: самые поздние выезды, которые успевают к сроку
+function findArriveBy(from, to, midnight, tArr, count = 4) {
+  const access = resolveStops(from), egress = resolveStops(to);
+  if (!access.length) throw new Error('Рядом с началом пути нет остановок');
+  if (!egress.length) throw new Error('Рядом с концом пути нет остановок');
+  let out = [];
+  for (let span = 5400; span <= 6 * 3600 && !out.length; span += 5400) {
+    const js = plan(net, midnight, tArr - span, access, egress, { buffer: settings.buffer * 60, count: 14, windowH: span / 3600 + 0.5 });
+    out = js.filter(j => j.arrive <= tArr);
+  }
+  out.sort((a, b) => b.leave - a.leave || a.arrive - b.arrive);
+  return out.slice(0, count);
+}
+const timeMode = () => ($('#timeMode') && $('#timeMode').value) || 'dep';
 $('#searchBtn').onclick = () => {
   if (!net) { toast('Сначала скачайте расписания (вкладка «Данные»)'); return; }
   for (const w of ['from', 'to']) if (!ep[w]) {
@@ -212,8 +226,9 @@ $('#searchBtn').onclick = () => {
   setTimeout(() => {
     try {
       const t = performance.now();
-      const js = findJourneys(ep.from, ep.to, midnight, t0);
-      lastResults = { js, midnight, t0, from: ep.from, to: ep.to };
+      const mode = timeMode();
+      const js = mode === 'arr' ? findArriveBy(ep.from, ep.to, midnight, t0) : findJourneys(ep.from, ep.to, midnight, t0);
+      lastResults = { js, midnight, t0, from: ep.from, to: ep.to, mode, deadline: mode === 'arr' ? t0 : null };
       renderResults(Math.round(performance.now() - t));
     } catch (e) { console.error(e); $('#results').innerHTML = `<div class="card empty">${esc(e.message)}</div>`; }
   }, 20);
@@ -230,11 +245,11 @@ function marksNear(j) {
 }
 
 function renderResults(ms) {
-  const { js, midnight } = lastResults;
-  if (!js.length) { $('#results').innerHTML = `<div class="card empty"><span class="big">${ICON.route}</span>Подходящих рейсов в ближайшие 14 часов нет.<br>Попробуйте другое время или дату.</div>`; return; }
+  const { js, midnight, mode, deadline } = lastResults;
+  if (!js.length) { $('#results').innerHTML = `<div class="card empty"><span class="big">${ICON.route}</span>${mode === 'arr' ? 'Не нашлось вариантов, которые успевают к ' + fmtTime(deadline) + '.' : 'Подходящих рейсов в ближайшие 14 часов нет.'}<br>Попробуйте другое время или дату.</div>`; return; }
   const nowSec = (Date.now() - midnight.getTime()) / 1000;
   const W = sec => Math.max(1, Math.round(sec / 60));
-  $('#results').innerHTML = `<div class="section-label">Варианты · ${js.length}</div>` + js.map((j, k) => {
+  $('#results').innerHTML = `<div class="section-label">${mode === 'arr' ? `Успеть к ${fmtTime(deadline)} · выезд как можно позже` : 'Варианты'} · ${js.length}</div>` + js.map((j, k) => {
     const rides = j.legs.filter(l => l.type === 'ride');
     const parts = [];
     if (j.accessWalk >= 60) parts.push(`<span class="badge walk">${ICON.walk}${W(j.accessWalk)}</span>`);
@@ -248,7 +263,7 @@ function renderResults(ms) {
     let h = `<div class="card res" data-k="${k}">
       <div class="res-head"><div class="res-time">${fmtTime(j.leave)}<span class="arrow"> → </span>${fmtTime(j.arrive)}</div><span class="pill">${fmtDur(j.arrive - j.leave)}</span></div>
       <div class="res-sub"><div class="res-chips">${parts.join('<span class="sep">›</span>')}</div>
-      <div class="res-meta">${soon} · ${j.transfers ? j.transfers + ' перес.' : 'без пересадок'}</div></div>`;
+      <div class="res-meta">${soon} · ${j.transfers ? j.transfers + ' перес.' : 'без пересадок'}${mode === 'arr' ? ` · <b class="spare">запас ${Math.round((deadline - j.arrive) / 60)} мин</b>` : ''}</div></div>`;
     const th = ticketHint(net, rides, midnight, getTicket());
     if (th) h += `<div class="tkhint ${th.ok ? '' : 'bad'}">🎫 ${esc(th.text)}</div>`;
     const near = marksNear(j);
@@ -282,7 +297,7 @@ function renderResults(ms) {
         const d = new Date(), today = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
         if (lastResults.midnight.getTime() === today && Date.now() < today + j.arrive * 1000) {
           const rides = ridesOf(j);
-          trackedManual = { midnight: lastResults.midnight, arrive: j.arrive, legs: j.legs.filter(l => l.type === 'ride').map((l, k) => ({ trip: l.trip, shift: l.shift, i0: l.i0, dep: l.dep, arr: l.arr, i1off: rides[k].i1off })) };
+          trackedManual = { midnight: lastResults.midnight, arrive: j.arrive, from: lastResults.from, to: lastResults.to, deadline: lastResults.deadline, legs: j.legs.filter(l => l.type === 'ride').map((l, k) => ({ trip: l.trip, shift: l.shift, i0: l.i0, dep: l.dep, arr: l.arr, i1off: rides[k].i1off })) };
           setTimeout(() => M.setVehicleFollow(true), 600);
           ticketJourneyNotes(net, trackedManual).catch(() => {}); pollNow();
         }
@@ -309,7 +324,7 @@ function remindSheet(j) {
     <p class="hint">Выход ${fmtTime(j.leave)}, прибытие ${fmtTime(j.arrive)}. ${EMBED ? 'На этой веб-странице уведомления придут, только пока она открыта; в APK — даже если приложение закрыто.' : 'Уведомления придут по расписанию, даже если приложение закрыто.'}</p>
     <button class="btn primary wide" id="rOnce">Только эту поездку (${midnight.toLocaleDateString('ru-RU')})</button>
     <h3 style="margin-top:16px">Или регулярно</h3>
-    <p class="hint">Каждый выбранный день — первый вариант с отправлением после ${$('#timeInput').value}.</p>
+    <p class="hint">Каждый выбранный день — ${lastResults.mode === 'arr' ? 'самый поздний выезд, который успевает к ' + $('#timeInput').value : 'первый вариант с отправлением после ' + $('#timeInput').value}.</p>
     <div class="days">${DAYN.map((d, i) => `<label><input type="checkbox" value="${i}" ${i === wd ? 'checked' : ''}><span>${d}</span></label>`).join('')}</div>
     <button class="btn wide" id="rRepeat">Сохранить регулярную поездку</button>
     <button class="btn ghost wide" id="rClose">Отмена</button>
@@ -322,14 +337,14 @@ function remindSheet(j) {
     const items = journeyNotifications(net, j, midnight, id * 10000, settings);
     const n = await P.schedule(items);
     plans.push({ id, kind: 'once', from: epSave(lastResults.from), to: epSave(lastResults.to), date: midnight.getTime(), leave: j.leave, arrive: j.arrive,
-      summary: summary(j), rides: ridesOf(j), created: Date.now() });
+      summary: summary(j), rides: ridesOf(j), deadline: lastResults.deadline, created: Date.now() });
     savePlans(); closeSheet(); toast(`Готово: ${n} уведомлений запланировано`);
   };
   b.querySelector('#rRepeat').onclick = async () => {
     const days = Array.from(b.querySelectorAll('.days input:checked')).map(i => +i.value);
     if (!days.length) { toast('Выберите дни'); return; }
     await P.notifInit();
-    const p = { id: newPlanId(), kind: 'repeat', days, time: $('#timeInput').value, from: epSave(lastResults.from), to: epSave(lastResults.to), created: Date.now() };
+    const p = { id: newPlanId(), kind: 'repeat', days, time: $('#timeInput').value, mode: lastResults.mode, from: epSave(lastResults.from), to: epSave(lastResults.to), created: Date.now() };
     plans.push(p); savePlans();
     const n = await scheduleRepeat(p);
     closeSheet(); toast(`Регулярная поездка сохранена: ${n} уведомлений на неделю вперёд`);
@@ -344,7 +359,7 @@ function ridesOf(j) {
 // ---- слежение «где мой автобус»
 let trackedManual = null;
 const trackCache = new Map();
-function resolveRides(key, midnight, rides) {
+function resolveRides(key, midnight, rides, extra = {}) {
   if (trackCache.has(key)) return trackCache.get(key);
   const legs = [];
   for (const r of rides || []) {
@@ -352,7 +367,7 @@ function resolveRides(key, midnight, rides) {
     if (!f) { trackCache.set(key, null); return null; }
     legs.push({ trip: f.trip, shift: r.shift || 0, i0: f.i0, dep: r.dep, arr: r.arr, i1off: r.i1off });
   }
-  const res = legs.length ? { midnight, legs } : null;
+  const res = legs.length ? { midnight, legs, ...extra } : null;
   if (res) ticketJourneyNotes(net, res).catch(() => {});
   trackCache.set(key, res); return res;
 }
@@ -366,11 +381,11 @@ function getTracked() {
   const d = new Date(); const today = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
   for (const p of plans) {
     if (p.hideTrack && now - p.hideTrack < 3 * 3600000) continue;
-    const occ = p.kind === 'once' ? [{ date: p.date, leave: p.leave, arrive: p.arrive, rides: p.rides }] : (p.next || []);
+    const occ = p.kind === 'once' ? [{ date: p.date, leave: p.leave, arrive: p.arrive, rides: p.rides, deadline: p.deadline }] : (p.next || []);
     for (const o of occ) {
       if (o.date !== today || !o.rides) continue;
       if (now < today + (o.leave - 15 * 60) * 1000 || now > today + o.arrive * 1000 + 60000) continue;
-      return resolveRides(p.id + ':' + o.date, new Date(today), o.rides);
+      return resolveRides(p.id + ':' + o.date, new Date(today), o.rides, { from: p.from, to: p.to, deadline: o.deadline || null, planId: p.id, planKind: p.kind, dayIdx: o.dayIdx });
     }
   }
   return null;
@@ -393,6 +408,61 @@ function rideBanner(tr, notFollowing) {
   el.classList.add('on');
   const f = el.querySelector('#rbFollow'); if (f) f.onclick = () => M.setVehicleFollow(true);
   el.querySelector('#rbClose').onclick = () => { trackedManual = null; for (const p of plans) p.hideTrack = Date.now(); el.classList.remove('on'); M.setVehicleFollow(false); };
+}
+// ---- смена маршрута при заторе: самый ранний по приезду вариант, который объезжает затор
+let lastReroute = 0;
+const REROUTE_PLAN = 200003;
+function rerouteHook(tr, info) {
+  if (!net || !tr.to || Date.now() - lastReroute < 5 * 60000) return;
+  const now = info.now, legs = tr.legs;
+  if (legs[legs.length - 1].arr - now < 6 * 60) return;
+  const k0 = legs.findIndex(l => { const x = info.matched.get(l.trip); return now <= l.arr + (x ? Math.max(0, x.delay) : 0) + 60; }); if (k0 < 0) return;
+  const leg = legs[k0], m = info.matched.get(leg.trip);
+  let access, tStart, where, exitIdx = -1;
+  if (now < leg.dep - 30 && (!m || m.seg < leg.i0)) {
+    where = k0 === 0 ? 'start' : 'transfer';
+    access = k0 === 0 ? resolveStops(tr.from) : [{ stop: net.stStop[leg.i0], walk: 0 }];
+    tStart = now;
+  } else {
+    if (!m || m.seg < leg.i0) return; // без GPS не знаем, где именно автобус
+    exitIdx = m.seg + 1;
+    if (exitIdx >= leg.i0 + (leg.i1off || 0)) return;
+    where = 'ride'; access = [{ stop: net.stStop[exitIdx], walk: 0 }];
+    tStart = net.stArr[exitIdx] + m.shift + Math.max(0, m.delay);
+  }
+  if (!access.length) return;
+  let js;
+  try { js = plan(net, tr.midnight, Math.round(tStart), access, resolveStops(tr.to), { buffer: settings.buffer * 60, count: 5, windowH: 3 }); } catch (e) { return; }
+  const jam = new Set(info.jams.map(j => j.key));
+  let best = null, bestEta = Infinity;
+  for (const j of js) {
+    const rides = j.legs.filter(l => l.type === 'ride'); if (!rides.length) continue;
+    let bad = false;
+    for (const l of rides) for (let i = l.i0; i < l.i1 && !bad; i++) if (jam.has(net.name[net.stStop[i]] + '>' + net.name[net.stStop[i + 1]])) bad = true;
+    if (bad) continue;
+    const fm = info.matched.get(rides[0].trip), e = j.arrive + (fm && fm.delay > 0 ? fm.delay : 0);
+    if (e < bestEta) { bestEta = e; best = j; }
+  }
+  if (!best || bestEta > info.eta - 180) return; // выигрыш меньше 3 минут — не дёргаем
+  lastReroute = Date.now();
+  const rides = best.legs.filter(l => l.type === 'ride');
+  const newLegs = rides.map(l => ({ trip: l.trip, shift: l.shift, i0: l.i0, dep: l.dep, arr: l.arr, i1off: l.i1 - l.i0 }));
+  if (where === 'ride') newLegs.unshift({ trip: leg.trip, shift: leg.shift, i0: leg.i0, dep: leg.dep, arr: Math.round(tStart), i1off: exitIdx - leg.i0 });
+  trackedManual = { midnight: tr.midnight, arrive: best.arrive, from: tr.from, to: tr.to, deadline: tr.deadline, legs: newLegs, rerouted: true };
+  const f = legInfo(net, rides[0]), nm = f.short || f.route;
+  const walk = f.from !== net.name[access[0].stop] ? ` (пешком к «${f.from}»)` : '';
+  const tail = `Приедете ~${fmtTime(bestEta)} вместо ~${fmtTime(info.eta)}` + (tr.deadline ? (bestEta <= tr.deadline ? `, успеваете к ${fmtTime(tr.deadline)}.` : `, к ${fmtTime(tr.deadline)} всё равно не успеть, но так быстрее.`) : '.');
+  const body = where === 'ride'
+    ? `Выйдите на «${net.name[net.stStop[exitIdx]]}» (~${fmtTime(tStart)}), дальше ${nm} в ${fmtTime(rides[0].dep)} с «${f.from}»${walk}. ${tail}`
+    : `Вместо прежнего: ${nm} в ${fmtTime(rides[0].dep)} с «${f.from}»${walk}` + (rides.length > 1 ? `, ${rides.length - 1} перес.` : '') + `. ${tail}`;
+  liveSay('reroute:' + lastReroute, 'Маршрут изменён: затор на пути', body, 0);
+  // старые уведомления по расписанию этой поездки → новые
+  (async () => {
+    if (tr.planId) await P.cancelWhere(id => Math.floor(id / 10000) === tr.planId && (tr.planKind === 'once' || Math.floor((id % 10000) / 1000) === tr.dayIdx));
+    await P.cancelPlan(REROUTE_PLAN);
+    await P.schedule(journeyNotifications(net, best, tr.midnight, REROUTE_PLAN * 10000, settings));
+  })().catch(() => {});
+  if (document.querySelector('#page-map.active')) M.showJourney(net, best, null, tr.to);
 }
 function renderTicketBar() {
   const el = $('#ticketBar'); if (!el) return;
@@ -436,11 +506,11 @@ async function scheduleRepeat(p) {
     const day = new Date(now.getFullYear(), now.getMonth(), now.getDate() + d);
     if (!p.days.includes((day.getDay() + 6) % 7)) continue;
     let js;
-    try { js = findJourneys(p.from, p.to, day, t0, 1); } catch (e) { continue; }
+    try { js = p.mode === 'arr' ? findArriveBy(p.from, p.to, day, t0, 1) : findJourneys(p.from, p.to, day, t0, 1); } catch (e) { continue; }
     const j = js[0]; if (!j) continue;
     if (day.getTime() + j.leave * 1000 < Date.now()) continue;
     total += await P.schedule(journeyNotifications(net, j, day, p.id * 10000 + d * 1000, settings));
-    p.next.push({ date: day.getTime(), leave: j.leave, arrive: j.arrive, summary: summary(j), rides: ridesOf(j) });
+    p.next.push({ date: day.getTime(), leave: j.leave, arrive: j.arrive, summary: summary(j), rides: ridesOf(j), deadline: p.mode === 'arr' ? t0 : null, dayIdx: d });
   }
   p.scheduledAt = Date.now(); savePlans();
   return total;

@@ -16,12 +16,14 @@ export function startLive(n, h) {
   poll();
 }
 export function pollNow() { poll(); }
+export { say as liveSay };
 
 function secNow() { const d = new Date(); return (d - new Date(d.getFullYear(), d.getMonth(), d.getDate())) / 1000; }
 
 async function poll() {
   if (busy || !net || !LIVE.enabled) return;
   const tr = hooks.getTracked ? hooks.getTracked() : null;
+  if (!tr) P.tracker.stop();
   const mapOn = !!document.querySelector('#page-map.active');
   if (!tr && (!mapOn || document.hidden)) return;
   busy = true;
@@ -34,6 +36,7 @@ async function poll() {
     if (tr) checkAlerts(tr, now);
   } catch (e) { LIVE.err = (e && e.message) || String(e); }
   finally { busy = false; if (hooks.update) hooks.update(LIVE); }
+  if (tr) { try { P.tracker.show(...statusLine(tr)); } catch (e) {} }
 }
 
 function say(key, title, body, minGapMs, value, valueStep) {
@@ -53,7 +56,8 @@ function routeLabel(t) { const r = net.tripRoute[t]; return net.routeShort[r] ||
 function checkAlerts(tr, now) {
   const legs = tr.legs, M = LIVE.matched;
   const tt = (Date.now() - tr.midnight.getTime()) / 1000;
-  const k0 = legs.findIndex(l => tt <= l.arr + 120);
+  const lateOf = l => { const m = M.get(l.trip); return m ? Math.max(0, m.delay) : 0; };
+  const k0 = legs.findIndex(l => tt <= l.arr + lateOf(l) + 120);
   if (k0 < 0) return;
   const pathKeys = new Set();
   legs.forEach((leg, k) => {
@@ -81,12 +85,44 @@ function checkAlerts(tr, now) {
       say('delay:' + leg.trip, `${nm} снова по графику`, boarding ? `Будет на «${net.name[net.stStop[leg.i0]]}» в ${fmtTime(leg.dep + Math.max(0, d))}.` : 'Опоздание наверстал.', 0, d, 120);
     }
   });
+  // ожидаемое прибытие и срок «приехать к»
+  const last = legs[legs.length - 1], lm = M.get(last.trip) || M.get((legs[k0] || last).trip);
+  let eta = last.arr + (lm ? Math.max(0, lm.delay) : 0);
+  const hit = LIVE.jams.filter(j => pathKeys.has(j.key));
+  const jamLoss = hit.reduce((a, j) => Math.max(a, j.loss), 0);
+  // затор впереди ещё не съеден опозданием — добавим его
+  if (hit.length && (!lm || lm.delay < jamLoss)) eta = last.arr + jamLoss;
+  if (tr.deadline && eta > tr.deadline + 60) {
+    say('late', `Опаздываете к ${fmtTime(tr.deadline)} примерно на ${mins(eta - tr.deadline)} мин`, `Ожидаемое прибытие ~${fmtTime(eta)}.` + (hit.length ? ' Ищу маршрут быстрее…' : ''), 0, eta, 120);
+  }
+  // затор на пути → попробовать сменить маршрут на самый ранний по приезду
+  if (hit.length && hooks.reroute) hooks.reroute(tr, { eta, jams: hit, now: (Date.now() - tr.midnight.getTime()) / 1000, matched: M });
   // заторы на оставшемся пути
   for (const j of LIVE.jams) {
     if (!pathKeys.has(j.key)) continue;
     say('jam:' + j.key, 'Затор на вашем пути',
       `«${j.from}» → «${j.to}»: машины теряют ~${mins(j.loss)} мин (линии ${[...j.routes].join(', ')}). Ваш автобус может задержаться.`, 20 * 60000);
   }
+}
+
+// текст постоянного уведомления «поездка сейчас»
+function statusLine(tr) {
+  const tt = (Date.now() - tr.midnight.getTime()) / 1000;
+  const fresh = LIVE.matched && Date.now() - LIVE.at < 90000;
+  const late = l => { const x = fresh ? LIVE.matched.get(l.trip) : null; return x ? Math.max(0, x.delay) : 0; };
+  const k = Math.max(0, tr.legs.findIndex(l => tt <= l.arr + late(l) + 60));
+  const leg = tr.legs[k] || tr.legs[tr.legs.length - 1], last = tr.legs[tr.legs.length - 1];
+  const m = fresh ? LIVE.matched.get(leg.trip) : null, d = m ? m.delay : 0;
+  const i1 = leg.i0 + (leg.i1off || 0);
+  const eta = last.arr + (tr.legs.indexOf(last) === k ? d : 0);
+  const title = `${routeLabel(leg.trip)} → «${net.name[net.stStop[i1]]}» · приезд ~${fmtTime(eta)}` + (tr.deadline ? ` (нужно к ${fmtTime(tr.deadline)})` : '');
+  let text;
+  if (m && m.seg < leg.i0) text = `Ваш ${routeLabel(leg.trip)} будет на «${net.name[net.stStop[leg.i0]]}» ~${fmtTime(leg.dep + Math.max(0, d))}`;
+  else if (m && m.seg >= 0) text = `Следующая: «${net.name[net.stStop[m.seg + 1]]}» ~${fmtTime(net.stArr[m.seg + 1] + m.shift + d)}`;
+  else text = tt < leg.dep ? `Отправление ${fmtTime(leg.dep)} с «${net.name[net.stStop[leg.i0]]}»` : `В пути · выход в ${fmtTime(leg.arr)}`;
+  if (m) text += d >= 60 ? ` · опоздание ${mins(d)} мин` : ' · по графику (GPS)';
+  else if (!fresh) text += ' · по расписанию';
+  return [title, text];
 }
 
 // для плашки: опоздание конкретного рейса

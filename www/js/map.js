@@ -233,7 +233,8 @@ function tickVehicles() {
   if (tr) {
     const tt = (Date.now() - tr.midnight.getTime()) / 1000;
     // текущий участок: первый, который ещё не закончился
-    const leg = tr.legs.find(l => tt <= V.net.stArr[V.net.tripOff[l.trip + 1] - 1] + l.shift && tt <= l.arr) || tr.legs[tr.legs.length - 1];
+    const lateOf = l => { const m = rtFresh() && V.rt.get(l.trip); return m ? Math.max(0, m.delay) : 0; };
+    const leg = tr.legs.find(l => tt <= V.net.stArr[V.net.tripOff[l.trip + 1] - 1] + l.shift + lateOf(l) && tt <= l.arr + lateOf(l)) || tr.legs[tr.legs.length - 1];
     const live = rtFresh() && V.rt.get(leg.trip);
     let p = live ? liveToPos(live) : vehiclePos(V.net, leg.trip, leg.shift, tt);
     const waiting = !p || (live && p.next <= leg.i0);

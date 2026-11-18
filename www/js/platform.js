@@ -71,6 +71,19 @@ export async function fetchText(url) {
   return await resp.text();
 }
 
+// ---------- фоновое слежение (нативный сервис; в браузере — ничего)
+const TRK = isNative ? plugin('Tracker') : null;
+let trkOn = false, trkLast = '';
+export const tracker = {
+  available: !!TRK,
+  async show(title, text) {
+    if (!TRK) return;
+    const k = title + '|' + text; if (trkOn && k === trkLast) return; trkLast = k;
+    try { await (trkOn ? TRK.update({ title, text }) : TRK.start({ title, text })); trkOn = true; } catch (e) {}
+  },
+  async stop() { if (!TRK || !trkOn) return; trkOn = false; trkLast = ''; try { await TRK.stop(); } catch (e) {} }
+};
+
 // ---------- геолокация
 export async function getPosition() {
   if (GEO) {
@@ -142,6 +155,15 @@ export async function cancelPlan(planId) {
   let k = 0;
   for (const [id, t] of webTimers) if (Math.floor(id / 10000) === planId) { clearTimeout(t); webTimers.delete(id); k++; }
   return k;
+}
+export async function cancelWhere(fn) {
+  if (LN) {
+    const p = await LN.getPending();
+    const ids = (p.notifications || []).filter(n => fn(+n.id)).map(n => ({ id: +n.id }));
+    for (let i = 0; i < ids.length; i += 100) await LN.cancel({ notifications: ids.slice(i, i + 100) });
+    return ids.length;
+  }
+  let k = 0; for (const [id, t] of webTimers) if (fn(id)) { clearTimeout(t); webTimers.delete(id); k++; } return k;
 }
 export async function pendingCount(planId) {
   if (LN) {

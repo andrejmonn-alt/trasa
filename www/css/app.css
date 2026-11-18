@@ -242,3 +242,8 @@ label.switch span{color:var(--ink);font-size:14px;margin:0}
 .dl{display:inline-block;font-size:11px;font-weight:800;border-radius:8px;padding:1px 6px;background:#e8730c;color:#fff;vertical-align:1px}
 .dl.bad{background:#c0262d}.dl.ok{background:#1f8a3a}.dl.tk{background:#2a5ca8}
 .ride-banner .rb-main{white-space:normal}
+
+.tmode{display:block;margin-left:2px!important;padding-right:14px!important;border:0;background:transparent url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%23778' stroke-width='1.6'/%3E%3C/svg%3E") no-repeat right center;font:inherit;font-size:12px;font-weight:700;color:var(--mute);padding:0;margin:0 0 4px;-webkit-appearance:none;appearance:none;cursor:pointer}
+.tmode:focus{outline:none;color:var(--ink)}
+.when label:has(.tmode)::after{content:''}
+.res-meta .spare{color:#1f8a3a}
