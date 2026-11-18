@@ -60,13 +60,14 @@ export async function download(url, onProgress = () => {}) {
 
 // ---------- текст из интернета (на телефоне — нативный HTTP без CORS)
 const HTTP = isNative ? plugin('CapacitorHttp') : null;
-export async function fetchText(url) {
+export async function fetchText(url, headers = {}) {
   if (HTTP) {
-    const r = await HTTP.get({ url, responseType: 'text', headers: { 'Cache-Control': 'no-cache' }, connectTimeout: 10000, readTimeout: 10000 });
+    const r = await HTTP.get({ url, responseType: 'text', headers: { 'Cache-Control': 'no-cache', ...headers }, connectTimeout: 15000, readTimeout: 60000 });
     if (r.status && r.status >= 400) throw new Error('HTTP ' + r.status);
     return typeof r.data === 'string' ? r.data : String(r.data);
   }
-  const resp = await fetch(url + (url.includes('?') ? '&' : '?') + '_=' + Date.now(), { cache: 'no-store' });
+  const h = { ...headers }; delete h['User-Agent'];
+  const resp = await fetch(url + (url.includes('?') ? '&' : '?') + '_=' + Date.now(), { cache: 'no-store', headers: h });
   if (!resp.ok) throw new Error('HTTP ' + resp.status);
   return await resp.text();
 }

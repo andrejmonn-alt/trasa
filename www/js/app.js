@@ -1,7 +1,7 @@
 import { importGtfs, distM } from './core/gtfs.js';
 import { buildNetwork, searchGroups, accessFromPoint, nearby } from './core/network.js';
 import { plan, rideStops, fmtTime, fmtDur } from './core/router.js';
-import { stopDisplayName, norm, translatePlaces } from './core/names.js';
+import { stopDisplayName, norm, translatePlaces, setVillageNames, villageCount } from './core/names.js';
 window.__trasaTranslatePlace = n => { const t = translatePlaces(n, 'county'); return t !== n ? t : n; };
 import * as P from './platform.js';
 import { journeyNotifications, legInfo } from './notify.js';
@@ -73,8 +73,45 @@ function showTab(name) {
 }
 document.querySelectorAll('.tabs button').forEach(b => b.onclick = () => showTab(b.dataset.tab));
 
+// ---------------- польские названия деревень края (Викиданные, раз в месяц)
+const VILLAGE_SPARQL = `SELECT ?lt ?pl ?lat ?lon WHERE {
+  SERVICE wikibase:box { ?v wdt:P625 ?c .
+    bd:serviceParam wikibase:cornerSouthWest "Point(24.30 53.95)"^^geo:wktLiteral .
+    bd:serviceParam wikibase:cornerNorthEast "Point(26.90 55.65)"^^geo:wktLiteral . }
+  ?v wdt:P17 wd:Q37 .
+  ?v rdfs:label ?pl . FILTER(LANG(?pl) = "pl")
+  ?v rdfs:label ?lt . FILTER(LANG(?lt) = "lt")
+  FILTER(STR(?lt) != STR(?pl))
+  BIND(geof:latitude(?c) AS ?lat) BIND(geof:longitude(?c) AS ?lon)
+}`;
+const kvGet = async k => { try { return DEMO ? JSON.parse(localStorage.getItem('trasa.kv.' + k)) : await P.store.get('kv', k); } catch (e) { return null; } };
+const kvPut = async (k, v) => { try { if (DEMO) localStorage.setItem('trasa.kv.' + k, JSON.stringify(v)); else await P.store.put('kv', k, v); } catch (e) {} };
+let villagesMeta = null, villagesBusy = false;
+async function loadVillagesCached() {
+  const v = await kvGet('plVillages');
+  if (v && v.rows) { setVillageNames(v.rows); villagesMeta = { at: v.at, n: villageCount() }; }
+  return v;
+}
+async function fetchVillages(force = false) {
+  if (villagesBusy) return false;
+  if (!force && villagesMeta && Date.now() - villagesMeta.at < 30 * 86400000) return false;
+  villagesBusy = true;
+  try {
+    const url = 'https://query.wikidata.org/sparql?format=json&query=' + encodeURIComponent(VILLAGE_SPARQL);
+    const txt = await P.fetchText(url, { 'Accept': 'application/sparql-results+json', 'User-Agent': 'Trasa/1.0 (Vilnius transit app; Android)' });
+    const rows = JSON.parse(txt).results.bindings.map(b => [b.lt.value, b.pl.value, +b.lat.value, +b.lon.value]);
+    if (rows.length < 50) throw new Error('мало данных: ' + rows.length);
+    await kvPut('plVillages', { at: Date.now(), rows });
+    setVillageNames(rows); villagesMeta = { at: Date.now(), n: villageCount() };
+    return true;
+  } catch (e) { console.warn('villages', e); if (force) toast('Не удалось загрузить польские названия: ' + (e.message || e)); return false; }
+  finally { villagesBusy = false; }
+}
+let villagesTried = false;
+
 // ---------------- загрузка сети
 async function loadNetwork() {
+  if (!villagesMeta) await loadVillagesCached();
   $('#netStatus').textContent = 'Загрузка расписаний…';
   const feeds = [];
   for (const f of FEEDS) {
@@ -98,6 +135,7 @@ async function loadNetwork() {
   if (M.mapState.ready) { M.drawNetwork(net, routePopup); M.onStopClick(stopPopup); M.startVehicles(net, getTracked, rideBanner); }
   startLive(net, { getTracked, reroute: rerouteHook, update: L => { if (!L.err) M.setRealtime(L.matched); }, alert: (t, b) => toast(t + ' — ' + b, 6000) });
   trackCache.clear();
+  if (!villagesTried) { villagesTried = true; fetchVillages().then(ok => { if (ok) { toast(`Польские названия деревень: ${villagesMeta.n}`); loadNetwork(); renderFeeds(); } }); }
   if ($('#results').querySelector('#goData')) $('#results').innerHTML = '';
   refreshRepeatPlans();
 }
@@ -602,6 +640,10 @@ function drawMarks() {
 
 // ---------------- данные
 function fmtDate(n) { if (!n) return '—'; const s = String(n); return `${s.slice(6, 8)}.${s.slice(4, 6)}.${s.slice(0, 4)}`; }
+function bindVillageBtn() {
+  const b = document.getElementById('vilUpd'); if (!b) return;
+  b.onclick = async () => { b.disabled = true; b.textContent = 'Загружаю…'; const ok = await fetchVillages(true); if (ok) { toast(`Польские названия деревень: ${villagesMeta.n}`); await loadNetwork(); } renderFeeds(); };
+}
 function renderFeeds() {
   if (EMBED) {
     const m = feedMeta[EMBED.id] || { counts: {} }, v = feedMeta.vrap || { counts: {} };
@@ -614,16 +656,23 @@ function renderFeeds() {
       <p class="hint" style="margin:10px 0 0">По тексту страницы svencionys.lt. Официальны только отправления из Švenčionys, Pabradė и Vilniaus AS; местные рейсы Transporto centras проведены через Nemenčinės pl., Неменчине и деревни линии 160 (Girininkija, Pakrauglė, Raudondvaris, Miškiniai, Pailgė) — время на этих остановках рассчитано (± до 10 мин). Рейсы на Visaginas (Meteorit/Seknija) в Неменчине не заезжают: Vilnius, Pailgė, Pabradė и дальше до Ignalina и Visaginas (участок за Švenčionys и время выезда из Visaginas — расчётные). Добавлены короткие рейсы Švenčionys–Pabradė, Pabradė–Zalavas и Molėtai–Pabradė (время в пути ~60 мин — расчётное). Рейс TOKS (Vilnius–Visaginas) не включён — по тексту его движение остановлено с 01.09.2026.</p></div>
       <div class="card"><div class="data-hero"><span class="badge train">Поезда</span><div><b>LTG Link — 5 линий через край</b><div class="hint" style="margin:2px 0 0">Turmantas (Pabradė, Švenčionėliai), Trakai, Marcinkonys (Lentvaris, Rūdiškės), аэропорт – Jašiūnai, Kena · ${(feedMeta.railtxt || { counts: {} }).counts.trips || 0} поездов</div></div></div>
       <p class="hint" style="margin:10px 0 0">По годовым PDF LTG Link (с 14.12.2025) и отправлениям из Naujoji Vilnia (Kena). Весной 2026 часть линий обновлялась — сверяйте с ltglink.lt. Дни курсирования некоторых поездов в PDF не читаются — считаются ежедневными. Линии Vilnius–Kaunas (Lentvaris, Vievis) здесь нет, в APK она придёт из полного файла LTG Link.</p></div>
+      ${`<div class="card"><div class="data-hero"><span class="badge intercity">PL</span><div><b>Польские названия деревень края</b><div class="hint" style="margin:2px 0 0">${villagesMeta && villagesMeta.n > 10 ? `${villagesMeta.n} названий из Викиданных · обновлено ${new Date(villagesMeta.at).toLocaleDateString('ru-RU')}` : 'ещё не загружены — пока только встроенные (Miszkińce и др.)'}</div></div></div>
+      <p class="hint" style="margin:10px 0 0">Каждая остановка вне Вильнюса получает польское название своей деревни (при одноимённых — ближайшей). «Miškinių kryžkelė» → «Miszkińce (skrzyżowanie)». Если перевести целиком нельзя — остаётся литовское; любое название можно поправить в «Названиях».</p>
+      <div class="actions" style="margin-top:8px"><button class="btn small" id="vilUpd">Обновить из Викиданных</button></div></div>`}
       <div class="card"><b>Чего нет в этой версии</b><p class="hint" style="margin:6px 0 0">Линий 163 (Eitminiškės), 146 (Skirgiškės), 172/174 и рейсов в Вильнюс через Ąžulaukė/Pranciškonys/Pašiliai — для них нет таблиц с остановками. Нет остальных междугородних (кроме Швянчёниса) и поезда Vilnius–Kaunas. Уведомления и GPS работают только в APK.</p></div>`;
+    bindVillageBtn();
     return;
   }
-  $('#feedsList').innerHTML = FEEDS.map(f => {
+  $('#feedsList').innerHTML = `<div class="card"><div class="data-hero"><span class="badge intercity">PL</span><div><b>Польские названия деревень края</b><div class="hint" style="margin:2px 0 0">${villagesMeta && villagesMeta.n > 10 ? `${villagesMeta.n} названий из Викиданных · обновлено ${new Date(villagesMeta.at).toLocaleDateString('ru-RU')}` : 'ещё не загружены — пока только встроенные (Miszkińce и др.)'}</div></div></div>
+      <p class="hint" style="margin:10px 0 0">Каждая остановка вне Вильнюса получает польское название своей деревни (при одноимённых — ближайшей). «Miškinių kryžkelė» → «Miszkińce (skrzyżowanie)». Если перевести целиком нельзя — остаётся литовское; любое название можно поправить в «Названиях».</p>
+      <div class="actions" style="margin-top:8px"><button class="btn small" id="vilUpd">Обновить из Викиданных</button></div></div>` + FEEDS.map(f => {
     const m = feedMeta[f.id];
     const st = m ? `обновлено ${new Date(m.importedAt).toLocaleDateString('ru-RU')} · ${m.counts.routes} линий, ${m.counts.trips} рейсов · действует до ${fmtDate(m.dateRange[1])}` : 'не скачано';
     return `<div class="card feed"><input type="checkbox" data-feed="${f.id}" ${settings.feeds[f.id] ? 'checked' : ''}>
       <div class="info"><b>${esc(f.title)}</b>${f.exp ? `<span class="exp">${esc(f.exp)}</span>` : ''}<div class="st">${st}</div>
       <div class="actions"><button class="btn small" data-dl="${f.id}">Скачать</button><label class="btn small" style="margin:0;color:var(--ink)">ZIP с телефона<input type="file" accept=".zip,application/zip" data-up="${f.id}" hidden></label></div></div></div>`;
   }).join('');
+  bindVillageBtn();
   document.querySelectorAll('[data-feed]').forEach(c => c.onchange = async () => { settings.feeds[c.dataset.feed] = c.checked; saveSettings(); await loadNetwork(); });
   document.querySelectorAll('[data-dl]').forEach(b => b.onclick = () => updateFeeds([b.dataset.dl]));
   document.querySelectorAll('[data-up]').forEach(inp => inp.onchange = async () => {

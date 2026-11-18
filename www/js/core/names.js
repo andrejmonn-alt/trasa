@@ -159,8 +159,83 @@ export function translatePlaces(text, scope = 'county') {
     if (!s.includes(lt)) continue;
     re.lastIndex = 0; s = s.replace(re, (m, p1) => p1 + pl);
   }
+  if (scope !== 'strict') s = villageInText(s);
   memo.set(text, s);
   return s;
+}
+
+// ---------- деревни края: польские названия из Викиданных (+ проверенные вручную)
+// rows: [lt, pl, lat, lon]
+const SEED_VILLAGES = [
+  ['Miškiniai', 'Miszkińce', 54.915, 25.458],   // у Неменчине (radzima.net)
+  ['Miežionys', 'Mieżańce', 54.80, 25.59],
+  ['Meškonys', 'Mieszkańce', 54.9304, 25.3116],
+];
+const VILL = new Map(), VILL_NOM = new Map();
+let villCount = 0;
+function genitives(w) {
+  const out = [];
+  const r = (a, b) => { if (w.endsWith(a)) out.push(w.slice(0, -a.length) + b); };
+  r('iai', 'ių'); if (!w.endsWith('iai')) r('ai', 'ų');
+  r('ės', 'ių'); r('ys', 'ių'); r('ys', 'io'); r('ė', 'ės'); r('as', 'o'); r('is', 'io'); r('us', 'aus'); r('a', 'os');
+  return out;
+}
+export function setVillageNames(rows) {
+  VILL.clear(); VILL_NOM.clear(); villCount = 0;
+  const add = (key, v) => { let a = VILL.get(key); if (!a) VILL.set(key, a = []); a.push(v); };
+  for (const [lt, pl, lat, lon] of [...SEED_VILLAGES, ...(rows || [])]) {
+    if (!lt || !pl || lt === pl || !inCounty(lat, lon)) continue;
+    if (/[()]/.test(pl) || pl.length > 40) continue;
+    const v = { lt, pl, lat, lon }; villCount++;
+    add(norm(lt), v);
+    if (!lt.includes(' ')) for (const g of genitives(lt)) add(norm(g), v);
+    let n = VILL_NOM.get(lt); if (!n) VILL_NOM.set(lt, n = new Set()); n.add(pl);
+  }
+  for (const k in _memo) delete _memo[k];
+  for (const k in _vre) delete _vre[k];
+}
+export function villageCount() { return villCount; }
+
+function nearestVillage(key, lat, lon, maxM = 8000) {
+  const a = VILL.get(norm(key)); if (!a) return null;
+  let best = null, bd = maxM;
+  for (const v of a) { const d = d2(lat, lon, v.lat, v.lon); if (d < bd) { bd = d; best = v; } }
+  return best;
+}
+const DESC = { 'k.': '', 'km.': '', 'kaimas': '', 'gyv.': '', 'vs.': '', 'st.': '', 'stotelė': '', 'kryžkelė': 'skrzyżowanie', 'kryžk.': 'skrzyżowanie',
+  'sankryža': 'skrzyżowanie', 'posūkis': 'skręt', 'mokykla': 'szkoła', 'bažnyčia': 'kościół', 'sodai': 'ogrody', 'sodų': 'ogrody', 'b.': '',
+  'centras': 'centrum', 'parduotuvė': 'sklep', 'kapinės': 'cmentarz', 'tiltas': 'most', 'ežeras': 'jezioro', 'dvaras': 'dwór', 'žiedas': 'rondo',
+  'aikštė': 'plac', 'pašta': 'poczta', 'seniūnija': 'starostwo', 'ambulatorija': 'przychodnia', 'miškas': 'las', 'sodyba': 'zagroda' };
+const NUMS = /^(I{1,3}|IV|V|\d+|\d+-?(ieji|asis|oji))$/;
+function villageStop(ltName, lat, lon) {
+  const base = ltName.replace(/\s*\([^)]*\)\s*$/, '').trim(); // «(… sen.)» — уточнение, отбрасываем
+  const w = base.split(/\s+/);
+  for (let n = Math.min(3, w.length); n >= 1; n--) {
+    const v = nearestVillage(w.slice(0, n).join(' '), lat, lon); if (!v) continue;
+    const rest = w.slice(n), descs = [], nums = [];
+    let ok = true;
+    for (const t of rest) {
+      const tl = t.toLowerCase();
+      if (NUMS.test(t)) nums.push(t.replace(/-?(ieji|asis|oji)$/, ''));
+      else if (tl in DESC) { if (DESC[tl]) descs.push(DESC[tl]); }
+      else { ok = false; break; }
+    }
+    if (!ok) continue;
+    return v.pl + (nums.length ? ' ' + nums.join(' ') : '') + (descs.length ? ' (' + [...new Set(descs)].join(', ') + ')' : '');
+  }
+  return null;
+}
+// в названиях рейсов: только если все одноимённые деревни края называются по-польски одинаково
+const _vre = {};
+setVillageNames([]);
+function villageInText(s) {
+  if (!VILL_NOM.size) return s;
+  return s.replace(/[A-Za-zĄČĘĖĮŠŲŪŽąčęėįšųūž]+(?:\s[A-ZĄČĘĖĮŠŲŪŽ][a-ząčęėįšųūž]+)?/g, m => {
+    const set = VILL_NOM.get(m) || (m.includes(' ') ? null : null);
+    if (set && set.size === 1) return [...set][0];
+    if (m.includes(' ')) return m.split(' ').map(x => { const t = VILL_NOM.get(x); return t && t.size === 1 ? [...t][0] : x; }).join(' ');
+    return m;
+  });
 }
 
 // Название остановки (Польская зона → польский, иначе как есть)
@@ -175,7 +250,8 @@ export function stopDisplayName(ltName, lat, lon, scope = 'county', overrides = 
     return b !== rail[1] ? b + ' (st. kol.)' : ltName;
   }
   const r = fullTranslate(ltName, scope);
-  return r || ltName; // если перевести целиком не получилось — оставляем литовское, без «гибридов»
+  if (r) return r;
+  return villageStop(ltName, lat, lon) || ltName; // если перевести целиком не получилось — оставляем литовское, без «гибридов»
 }
 // Перевод целиком: каждое слово должно быть известно. Иначе null.
 function fullTranslate(ltName, scope) {
